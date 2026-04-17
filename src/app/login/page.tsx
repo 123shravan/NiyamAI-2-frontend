@@ -8,11 +8,11 @@ export default function LoginPage() {
   const { sendOTP, login, error, clearError, isAuthenticated } = useAuth();
   const router = useRouter();
 
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
   const [step, setStep] = useState<'email' | 'otp'>('email');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [otpSent, setOtpSent] = useState(false);
 
   // Redirect if already authenticated (moved to useEffect to avoid render-time redirects)
   useEffect(() => {
@@ -31,7 +31,6 @@ export default function LoginPage() {
     try {
       await sendOTP(email);
       setStep('otp');
-      setOtpSent(true);
     } catch {
       // Error is set in context
     } finally {
@@ -86,13 +85,46 @@ export default function LoginPage() {
 
         {/* Login Card */}
         <div className="card-glass p-8 shadow-2xl animate-fade-in-up" style={{ animationDelay: '0.1s' }}>
+          {step === 'email' && (
+            <div className="mb-6 rounded-xl bg-slate-100 p-1 grid grid-cols-2 gap-1">
+              <button
+                type="button"
+                onClick={() => setAuthMode('signin')}
+                className={`rounded-lg py-2 text-sm font-medium transition-colors ${
+                  authMode === 'signin'
+                    ? 'bg-white text-slate-800 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                Sign In
+              </button>
+              <button
+                type="button"
+                onClick={() => setAuthMode('signup')}
+                className={`rounded-lg py-2 text-sm font-medium transition-colors ${
+                  authMode === 'signup'
+                    ? 'bg-white text-slate-800 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                Sign Up
+              </button>
+            </div>
+          )}
+
           <h2 className="text-xl font-semibold text-slate-800 mb-1">
-            {step === 'email' ? 'Welcome' : 'Enter Verification Code'}
+            {step === 'email'
+              ? authMode === 'signin'
+                ? 'Welcome back'
+                : 'Create your account'
+              : 'Enter Verification Code'}
           </h2>
           <p className="text-slate-500 text-sm mb-6">
             {step === 'email'
-              ? 'Sign in to access compliance guidance for PWM Rules.'
-              : `We sent a 6-digit code to ${email}`
+              ? authMode === 'signin'
+                ? 'Sign in to access compliance guidance for PWM Rules.'
+                : 'Verify your email to start onboarding and create your account.'
+              : `We sent a 6-digit code to ${email}.`
             }
           </p>
 
@@ -125,8 +157,17 @@ export default function LoginPage() {
                 disabled={isSubmitting || !email.trim()}
                 className="w-full btn-primary py-3.5 text-base"
               >
-                {isSubmitting ? 'Sending code...' : 'Send Verification Code'}
+                {isSubmitting
+                  ? 'Sending code...'
+                  : authMode === 'signin'
+                    ? 'Send Sign-In Code'
+                    : 'Send Sign-Up Code'}
               </button>
+              <p className="text-xs text-slate-500 mt-3 text-center">
+                {authMode === 'signin'
+                  ? 'New users can switch to Sign Up above.'
+                  : 'After verification, you will complete your profile in one quick step.'}
+              </p>
             </form>
           ) : (
             <form onSubmit={handleVerifyOTP}>
@@ -151,7 +192,11 @@ export default function LoginPage() {
                 disabled={isSubmitting || otp.length !== 6}
                 className="w-full btn-primary py-3.5 text-base mb-3"
               >
-                {isSubmitting ? 'Verifying...' : 'Verify and Sign In'}
+                {isSubmitting
+                  ? 'Verifying...'
+                  : authMode === 'signin'
+                    ? 'Verify and Sign In'
+                    : 'Verify and Continue'}
               </button>
               <button
                 type="button"
