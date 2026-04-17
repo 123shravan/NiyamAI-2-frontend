@@ -40,20 +40,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [onboardingToken, setOnboardingToken] = useState<string | null>(null);
 
   // DO NOT auto-check session on mount - this bypasses OTP!
-  // EXCEPTION: After Google OAuth redirect (?auth=google), we MUST check session
-  // because the backend set httpOnly cookies during the OAuth callback.
+  // Session is only restored if user explicitly clicks "Stay logged in" or server validates it
+  // Remove this auto-refresh to prevent silent re-authentication without OTP verification
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('auth') === 'google') {
-        // Clean the URL immediately
-        window.history.replaceState({}, '', window.location.pathname);
-        // Validate session from cookies set by Google OAuth callback
-        checkSession();
-        return;
-      }
-    }
-    setIsLoading(false);
+    // Session check is now EXPLICIT only - no automatic login
+    // If user closes browser, they must log in again via OTP
+    setIsLoading(false); // Stop showing loading spinner since no async work is happening
   }, []);
 
   // Set Authorization header whenever accessToken changes
