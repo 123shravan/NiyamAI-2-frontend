@@ -1,18 +1,20 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useAuth } from '@/lib/authContext';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 
-export default function LoginPage() {
+function LoginContent() {
   const { sendOTP, login, error, clearError, isAuthenticated } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
   const [step, setStep] = useState<'email' | 'otp'>('email');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [googleError, setGoogleError] = useState<string | null>(null);
 
   // Redirect if already authenticated (moved to useEffect to avoid render-time redirects)
   useEffect(() => {
@@ -21,12 +23,23 @@ export default function LoginPage() {
     }
   }, [isAuthenticated, router]);
 
+  // Handle Google OAuth error redirect
+  useEffect(() => {
+    const errorParam = searchParams.get('error');
+    if (errorParam === 'google_auth_failed') {
+      setGoogleError('Could not complete sign-in with Google. Please try again.');
+      // Clean the URL without reloading
+      window.history.replaceState({}, '', '/login');
+    }
+  }, [searchParams]);
+
   const handleSendOTP = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim()) return;
 
     setIsSubmitting(true);
     clearError();
+    setGoogleError(null);
 
     try {
       await sendOTP(email);
@@ -129,9 +142,9 @@ export default function LoginPage() {
           </p>
 
           {/* Error message */}
-          {error && (
+          {(error || googleError) && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
-              {error}
+              {error || googleError}
             </div>
           )}
 
@@ -239,5 +252,17 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen gradient-bg flex items-center justify-center">
+        <div className="text-white text-lg">Loading...</div>
+      </div>
+    }>
+      <LoginContent />
+    </Suspense>
   );
 }
