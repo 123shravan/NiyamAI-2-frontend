@@ -10,6 +10,12 @@ interface User {
   id: string;
   email: string;
   name: string | null;
+  phone?: string | null;
+  designation?: string | null;
+  org_name?: string | null;
+  org_type?: string | null;
+  state?: string | null;
+  website?: string | null;
   plan: string;
   is_admin: boolean;  // From JWT payload — cannot be self-assigned
 }
@@ -23,6 +29,7 @@ interface AuthContextType {
   onboardingToken: string | null;
   login: (email: string, otp: string) => Promise<{ status: string; onboarding_token?: string } | void>;
   completeOnboarding: (onboardingRequest: any) => Promise<void>;
+  updateProfile: (profileData: any) => Promise<void>;
   sendOTP: (email: string) => Promise<void>;
   logout: () => Promise<void>;
   validateSession: (allowRefresh?: boolean) => Promise<boolean>;
@@ -61,17 +68,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (res.data?.access_token) {
         // Store token in state and axios headers
         setAccessToken(res.data.access_token);
+        api.defaults.headers.common['Authorization'] = `Bearer ${res.data.access_token}`;
         
-        // Decode JWT payload to get user info including is_admin
-        const payload = _decodeJwtPayload(res.data.access_token);
-        if (payload) {
-          setUser({
-            id: res.data.user?.id || payload.sub || '',
-            email: res.data.user?.email || payload.email || '',
-            name: null,
-            plan: 'free',
-            is_admin: Boolean(res.data.user?.is_admin ?? payload.is_admin ?? false),
-          });
+        // Fetch full profile from API rather than decoding partial JWT payload
+        try {
+          const meRes = await api.get('/auth/me');
+          setUser(meRes.data);
+        } catch (meErr) {
+          console.error("Failed to fetch full profile", meErr);
         }
       }
     } catch {
@@ -105,22 +109,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { status: 'new_user', onboarding_token: res.data.onboarding_token };
       }
       
-      // Handle existing user login
-      const userData = res.data.user;
-      
-      // Store token
+      // Store token early so we can fetch full profile
       if (res.data.access_token) {
         setAccessToken(res.data.access_token);
         api.defaults.headers.common['Authorization'] = `Bearer ${res.data.access_token}`;
+        
+        try {
+          const meRes = await api.get('/auth/me');
+          setUser(meRes.data);
+        } catch (meErr) {
+          console.error("Failed to fetch full profile during login");
+        }
       }
-      
-      setUser({
-        id: userData.id || '',
-        email: userData.email || email,
-        name: userData.name || null,
-        plan: userData.plan || 'free',
-        is_admin: Boolean(userData.is_admin ?? false),  // From backend DB, not user input
-      });
       return { status: 'logged_in' };
     } catch (err: any) {
       const message = err.response?.data?.detail || 'Invalid verification code. Please try again.';
@@ -152,7 +152,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setError(null);
     try {
       const res = await api.post('/auth/complete-onboarding', onboardingRequest);
-      const userData = res.data.user;
       
       // Store token
       if (res.data.access_token) {
@@ -163,15 +162,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Clear onboarding token now that onboarding is complete
       setOnboardingToken(null);
       
-      setUser({
-        id: userData.id || '',
-        email: userData.email || '',
-        name: userData.name || null,
-        plan: userData.plan || 'free',
-        is_admin: Boolean(userData.is_admin ?? false),
-      });
+      try {
+        const meRes = await api.get('/auth/me');
+        setUser(meRes.data);
+      } catch (meErr) {
+        console.error("Failed to fetch full profile during onboarding completion");
+      }
     } catch (err: any) {
       const message = err.response?.data?.detail || 'Failed to complete onboarding. Please try again.';
+      setError(message);
+      throw new Error(message);
+    }
+  }, []);
+
+  const updateProfile = useCallback(async (profileData: any) => {
+    setError(null);
+    try {
+      const res = await api.put('/auth/profile', profileData);
+      setUser(res.data);
+    } catch (err: any) {
+      const message = err.response?.data?.detail || 'Failed to update profile. Please try again.';
       setError(message);
       throw new Error(message);
     }
@@ -186,16 +196,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const res = await api.post('/auth/token/refresh');
         if (res.data?.access_token) {
           setAccessToken(res.data.access_token);
-          const payload = _decodeJwtPayload(res.data.access_token);
-          if (payload && res.data.user) {
-            setUser({
-              id: res.data.user.id || payload.sub || '',
-              email: res.data.user.email || payload.email || '',
-              name: null,
-              plan: 'free',
-              is_admin: Boolean(res.data.user.is_admin ?? payload.is_admin ?? false),
-            });
+          api.defaults.headers.common['Authorization'] = `Bearer ${res.data.access_token}`;
+          try {
+            const meRes = await api.get('/auth/me');
+            setUser(meRes.data);
             return true;
+          } catch (e) {
+            return false;
           }
         }
       } else {
@@ -222,6 +229,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         onboardingToken,
         login,
         completeOnboarding,
+        updateProfile,
         sendOTP,
         logout,
         validateSession,

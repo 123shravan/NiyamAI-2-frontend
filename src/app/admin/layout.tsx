@@ -5,6 +5,8 @@ import { useAuth } from '@/lib/authContext';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
+import UserProfileAvatar from '@/components/UserProfileAvatar';
+import ProfileCompletionModal from '@/components/ProfileCompletionModal';
 import './admin.css';
 
 const NAV_ITEMS = [
@@ -27,7 +29,8 @@ function AdminLayout({ children }: { children: React.ReactNode }) {
         <div className="admin-sidebar-header">
           <div className="admin-mode-badge">ADMIN MODE</div>
           <div className="admin-brand">Niyam AI</div>
-          <div className="admin-user-info">
+          <div className="admin-user-info" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <UserProfileAvatar />
             <span className="admin-user-email">{user?.email}</span>
           </div>
         </div>
@@ -80,6 +83,8 @@ function AdminLayout({ children }: { children: React.ReactNode }) {
           {children}
         </div>
       </main>
+      
+      <ProfileCompletionModal />
     </div>
   );
 }

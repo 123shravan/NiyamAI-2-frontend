@@ -5,6 +5,8 @@ import { useAuth } from '@/lib/authContext';
 import { useRouter } from 'next/navigation';
 import { useSSEStream } from '@/lib/useSSEStream';
 import api from '@/lib/api';
+import UserProfileAvatar from '@/components/UserProfileAvatar';
+import ProfileCompletionModal from '@/components/ProfileCompletionModal';
 
 interface HistorySummary {
   id: string;
@@ -138,6 +140,8 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-slate-50">
+      <ProfileCompletionModal />
+      
       {/* ── Header ────────────────────────────────────────── */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-20">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
@@ -161,15 +165,7 @@ export default function DashboardPage() {
                 Admin Portal
               </a>
             )}
-            <span className="text-sm text-slate-500 hidden sm:inline">
-              {user?.email || ''}
-            </span>
-            <button
-              onClick={handleLogout}
-              className="text-sm text-slate-500 hover:text-red-500 transition-colors font-medium"
-            >
-              Sign Out
-            </button>
+            <UserProfileAvatar />
           </div>
         </div>
       </header>
