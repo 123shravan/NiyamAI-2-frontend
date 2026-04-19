@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/authContext';
 import Link from 'next/link';
+import NetworkBackground from '@/components/NetworkBackground';
 
 export default function Home() {
   const router = useRouter();
@@ -42,7 +43,8 @@ export default function Home() {
   }
 
   return (
-    <div className="bg-surface-dim text-on-surface font-body antialiased min-h-screen flex flex-col dark">
+    <div className="bg-surface-dim text-on-surface font-body antialiased min-h-screen flex flex-col dark relative overflow-hidden">
+      <NetworkBackground />
       {/* TopNavBar */}
       <nav className="fixed top-0 w-full z-50 flex justify-between items-center px-12 py-6 max-w-[1440px] left-1/2 -translate-x-1/2 bg-surface-dim/80 backdrop-blur-md border-b border-outline-variant/10">
         <div className="font-headline text-2xl tracking-tight font-bold text-on-surface">
@@ -55,7 +57,7 @@ export default function Home() {
         </div>
       </nav>
 
-      <main className="flex-grow pt-32">
+      <main className="flex-grow pt-32 relative z-10">
         {/* Hero Section */}
         <section className="max-w-[1440px] mx-auto px-12 py-20 lg:py-32 grid lg:grid-cols-12 gap-16 items-center">
           <div className="lg:col-span-7 space-y-8">
@@ -210,7 +212,7 @@ export default function Home() {
       </main>
 
       {/* Footer */}
-      <footer className="w-full py-20 px-12 grid grid-cols-1 md:grid-cols-4 gap-12 max-w-[1440px] mx-auto bg-surface-container-lowest">
+      <footer className="w-full py-20 px-12 grid grid-cols-1 md:grid-cols-4 gap-12 max-w-[1440px] mx-auto bg-surface-container-lowest relative z-10">
         <div className="col-span-1 md:col-span-1 space-y-6">
           <div className="font-headline text-xl font-bold text-on-surface">
             Niyam AI
