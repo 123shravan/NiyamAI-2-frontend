@@ -101,4 +101,23 @@ body {
   .text-balance {
     text-wrap: balance;
   }
+  .material-symbols-outlined {
+    font-variation-settings:
+    'FILL' 0,
+    'wght' 400,
+    'GRAD' 0,
+    'opsz' 24;
+  }
+  .text-gradient-primary {
+    background: linear-gradient(135deg, #4f46e5 0%, #c3c0ff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .bg-gradient-primary {
+    background: linear-gradient(135deg, #4f46e5 0%, #c3c0ff 100%);
+  }
+  .glass-panel {
+    background-color: rgba(46, 52, 71, 0.7);
+    backdrop-filter: blur(24px);
+  }
 }
