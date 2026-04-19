@@ -60,15 +60,15 @@ const config: Config = {
         "outline": "#918fa1"
       },
       borderRadius: {
-        DEFAULT: "0.125rem",
-        lg: "0.25rem",
-        xl: "0.5rem",
-        full: "0.75rem"
+        DEFAULT: "0.75rem",
+        lg: "1rem",
+        xl: "1.5rem",
+        full: "9999px"
       },
       fontFamily: {
-        headline: ["var(--font-noto-serif)", "Noto Serif", "serif"],
-        body: ["var(--font-inter)", "Inter", "sans-serif"],
-        label: ["var(--font-inter)", "Inter", "sans-serif"]
+        headline: ["Canela", "var(--font-noto-serif)", "Noto Serif", "serif"],
+        body: ["Canela", "var(--font-inter)", "Inter", "sans-serif"],
+        label: ["Canela", "var(--font-inter)", "Inter", "sans-serif"]
       }
     },
   },
