@@ -8,6 +8,7 @@ interface Point {
   vx: number;
   vy: number;
   radius: number;
+  color: string;
 }
 
 const NetworkBackground: React.FC = () => {
@@ -24,10 +25,18 @@ const NetworkBackground: React.FC = () => {
     let animationFrameId: number;
     let mouse = { x: -1000, y: -1000 };
 
-    // Performance settings
+    // Performance & visual settings
     const MAX_DISTANCE = 150; // max line connection distance
     const MOUSE_REPEL_RADIUS = 100;
     
+    // A palette matching the provided tailwind theme (Primary, Indigo, Secondary, Surface tints)
+    const COLOR_PALETTE = [
+      '195, 192, 255', // surface-tint / primary-fixed-dim
+      '79, 70, 229',   // primary-container
+      '183, 200, 225', // secondary-fixed-dim
+      '220, 225, 251', // inverse-surface
+    ];
+
     // Determine dynamic particle count based on window size
     const getParticleCount = (width: number) => {
       if (width < 768) return 35; // Mobile
@@ -36,8 +45,16 @@ const NetworkBackground: React.FC = () => {
     };
 
     const resizeCanvas = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = window.innerWidth * dpr;
+      canvas.height = window.innerHeight * dpr;
+      
+      // Force CSS width/height to logical bounds to prevent blurring
+      canvas.style.width = `${window.innerWidth}px`;
+      canvas.style.height = `${window.innerHeight}px`;
+      
+      // Scale canvas context to match device pixel ratio
+      ctx.scale(dpr, dpr);
       initParticles();
     };
 
@@ -46,18 +63,22 @@ const NetworkBackground: React.FC = () => {
       const particleCount = getParticleCount(window.innerWidth);
       
       for (let i = 0; i < particleCount; i++) {
+        const randomColor = COLOR_PALETTE[Math.floor(Math.random() * COLOR_PALETTE.length)];
+        
         particles.push({
-          x: Math.random() * canvas.width,
-          y: Math.random() * canvas.height,
+          x: Math.random() * window.innerWidth,
+          y: Math.random() * window.innerHeight,
           vx: (Math.random() - 0.5) * 0.3, // Very slow movement
           vy: (Math.random() - 0.5) * 0.3,
-          radius: Math.random() * 1.5 + 0.5, // 0.5px to 2px radius
+          radius: Math.random() * 1.5 + 0.8, // Slightly larger radii for visibility
+          color: randomColor,
         });
       }
     };
 
     const drawParticles = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // Clear scaled logical viewport
+      ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
 
       for (let i = 0; i < particles.length; i++) {
         const p1 = particles[i];
@@ -67,8 +88,8 @@ const NetworkBackground: React.FC = () => {
         p1.y += p1.vy;
 
         // Bouncing off edges smoothly
-        if (p1.x < 0 || p1.x > canvas.width) p1.vx *= -1;
-        if (p1.y < 0 || p1.y > canvas.height) p1.vy *= -1;
+        if (p1.x < 0 || p1.x > window.innerWidth) p1.vx *= -1;
+        if (p1.y < 0 || p1.y > window.innerHeight) p1.vy *= -1;
 
         // Mouse Repel Logic
         const dxMouse = mouse.x - p1.x;
@@ -84,7 +105,7 @@ const NetworkBackground: React.FC = () => {
         // Draw Node
         ctx.beginPath();
         ctx.arc(p1.x, p1.y, p1.radius, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(99, 102, 241, 0.4)`; // Indigo node color
+        ctx.fillStyle = `rgba(${p1.color}, 0.55)`; // Clearer opacity logic
         ctx.fill();
 
         // Draw Connections
@@ -98,9 +119,10 @@ const NetworkBackground: React.FC = () => {
           if (dist < MAX_DISTANCE) {
             ctx.beginPath();
             // Opacity decreases as distance increases
-            const opacity = (1 - dist / MAX_DISTANCE) * 0.15; 
-            ctx.strokeStyle = `rgba(99, 102, 241, ${opacity})`;
-            ctx.lineWidth = 0.6;
+            const opacity = (1 - dist / MAX_DISTANCE) * 0.18; 
+            // Mix connections using p1's color group
+            ctx.strokeStyle = `rgba(${p1.color}, ${opacity})`;
+            ctx.lineWidth = 0.8; // slightly thicker for retina clarity
             ctx.moveTo(p1.x, p1.y);
             ctx.lineTo(p2.x, p2.y);
             ctx.stroke();
