@@ -28,9 +28,10 @@ interface AuthContextType {
   accessToken: string | null;
   onboardingToken: string | null;
   login: (email: string, otp: string) => Promise<{ status: string; onboarding_token?: string } | void>;
+  loginWithPassword: (email: string, password: string) => Promise<void>;
   completeOnboarding: (onboardingRequest: any) => Promise<void>;
   updateProfile: (profileData: any) => Promise<void>;
-  sendOTP: (email: string) => Promise<void>;
+  sendOTP: (email: string) => Promise<{ status: string; message?: string } | void>;
   logout: () => Promise<void>;
   validateSession: (allowRefresh?: boolean) => Promise<boolean>;
   error: string | null;
@@ -90,7 +91,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const sendOTP = useCallback(async (email: string) => {
     setError(null);
     try {
-      await api.post('/auth/otp/send', { email });
+      const res = await api.post('/auth/otp/send', { email });
+      if (res.data?.status === 'password_required') {
+        return res.data;
+      }
     } catch (err: any) {
       const message = err.response?.data?.detail || 'Could not send verification code. Please try again.';
       setError(message);
@@ -128,6 +132,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error(message);
     }
   }, []);
+
+  const loginWithPassword = useCallback(async (email: string, password: string) => {
+    setError(null);
+    try {
+      const res = await api.post('/auth/password/verify', { email, password });
+      if (res.data.access_token) {
+        setAccessToken(res.data.access_token);
+        api.defaults.headers.common['Authorization'] = `Bearer ${res.data.access_token}`;
+        
+        try {
+          const meRes = await api.get('/auth/me');
+          setUser(meRes.data);
+        } catch (meErr) {
+          console.error("Failed to fetch full profile during password login");
+        }
+      }
+    } catch (err: any) {
+      const message = err.response?.data?.detail || 'Invalid email or password.';
+      setError(message);
+      throw new Error(message);
+    }
+  }, []);
+
 
   const logout = useCallback(async () => {
     try {
@@ -228,6 +255,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         accessToken,
         onboardingToken,
         login,
+        loginWithPassword,
         completeOnboarding,
         updateProfile,
         sendOTP,
