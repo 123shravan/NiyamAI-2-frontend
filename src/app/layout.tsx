@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 import { AuthProvider } from "@/lib/authContext";
-import BackendWakeup from "@/components/BackendWakeup";
 
 import { Spectral, Inter } from "next/font/google";
 
@@ -39,7 +38,6 @@ export default function RootLayout({
         className={`${spectral.variable} ${inter.variable} antialiased`}
       >
         <AuthProvider>
-          <BackendWakeup />
           {children}
         </AuthProvider>
       </body>
