@@ -10,14 +10,18 @@ const api = axios.create({
 });
 
 // Interceptor: auto-refresh token on 401
+// IMPORTANT: Auth endpoints (/auth/*) handle their own error flows.
+// Only intercept 401s for protected resources (queries, admin, profile, etc.)
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
+    const url = originalRequest.url || '';
 
-    const isRefreshRequest = originalRequest.url?.includes('/auth/token/refresh');
+    // Skip auto-refresh for auth endpoints — they handle their own 401s
+    const isAuthEndpoint = url.startsWith('/auth/');
 
-    if (error.response?.status === 401 && !originalRequest._retry && !isRefreshRequest) {
+    if (error.response?.status === 401 && !originalRequest._retry && !isAuthEndpoint) {
       originalRequest._retry = true;
 
       try {
@@ -26,7 +30,7 @@ api.interceptors.response.use(
         return api(originalRequest);
       } catch (refreshError) {
         // Refresh failed — redirect to login
-        if (typeof window !== 'undefined') {
+        if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
           window.location.href = '/login';
         }
         return Promise.reject(refreshError);
