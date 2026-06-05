@@ -43,7 +43,7 @@ function LoginContent() {
     setGoogleError(null);
 
     try {
-      const res = await sendOTP(email);
+      const res = await sendOTP(email.trim().toLowerCase());
       if (res && res.status === 'password_required') {
         setStep('password');
       } else {
@@ -64,7 +64,7 @@ function LoginContent() {
     clearError();
 
     try {
-      const result = await login(email, otp);
+      const result = await login(email.trim().toLowerCase(), otp);
       
       // Check if user is new and needs onboarding
       if (result && result.status === 'new_user' && result.onboarding_token) {
