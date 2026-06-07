@@ -66,9 +66,10 @@ const config: Config = {
         full: "9999px"
       },
       fontFamily: {
-        headline: ["var(--font-spectral)", "Spectral", "serif"],
+        headline: ["Georgia", "Times New Roman", "serif"],
         body: ["var(--font-inter)", "Inter", "sans-serif"],
-        label: ["var(--font-inter)", "Inter", "sans-serif"]
+        label: ["var(--font-inter)", "Inter", "sans-serif"],
+        mono: ["var(--font-dm-mono)", "Geist Mono", "monospace"]
       }
     },
   },

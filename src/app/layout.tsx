@@ -3,24 +3,20 @@ import localFont from "next/font/local";
 import "./globals.css";
 import { AuthProvider } from "@/lib/authContext";
 
-import { Spectral, Inter } from "next/font/google";
-
-const spectral = Spectral({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-spectral",
-});
-
-const inter = Inter({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+const geist = localFont({
+  src: "./fonts/GeistVF.woff",
   variable: "--font-inter",
 });
 
+const geistMono = localFont({
+  src: "./fonts/GeistMonoVF.woff",
+  variable: "--font-dm-mono",
+});
+
 export const metadata: Metadata = {
-  title: "Niyam AI - Legal Intelligence Platform",
-  description: "AI-powered legal query and document analysis system. Search through comprehensive legal provisions, rules, and acts instantly.",
-  keywords: "legal research, AI legal assistant, Indian law, legal database",
+  title: "Niyam AI | Regulatory Intelligence Cabin",
+  description: "AI-powered legal query and document analysis system for Indian environmental compliance and regulatory intelligence.",
+  keywords: "legal research, AI legal assistant, Indian law, legal database, compliance intelligence",
   authors: [{ name: "Niyam AI" }],
 };
 
@@ -35,7 +31,7 @@ export default function RootLayout({
         <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
       </head>
       <body
-        className={`${spectral.variable} ${inter.variable} antialiased`}
+        className={`${geist.variable} ${geistMono.variable} antialiased`}
       >
         <AuthProvider>
           {children}

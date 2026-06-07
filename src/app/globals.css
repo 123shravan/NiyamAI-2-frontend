@@ -3,21 +3,20 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #070d1f;
+  --foreground: #dce1fb;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  background: var(--background);
 }
 
 body {
   color: var(--foreground);
   background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-inter), sans-serif;
+  overflow-x: hidden;
+  margin: 0;
 }
 
 /* Shared UI primitives used by auth + dashboard pages */
@@ -83,6 +82,84 @@ body {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+.fade-in-up {
+  animation: fadeInUp 0.5s ease both;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #464555;
+  border-radius: 9999px;
+}
+
+.pulse-ring {
+  animation: pulseRing 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulseRing {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scale(1.1);
+    opacity: 0.2;
+  }
+  100% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+}
+
+.btn-pulse {
+  animation: buttonPulse 3s infinite;
+}
+
+@keyframes buttonPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(79, 70, 229, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(79, 70, 229, 0);
+  }
+}
+
+.loading-step {
+  transition: all 0.4s ease;
+}
+
+.loading-step.pending {
+  opacity: 0.35;
+}
+
+.loading-step.active {
+  opacity: 1;
+  transform: scale(1.02);
+}
+
+.loading-step.done {
+  opacity: 1;
+}
+
+.suggestion-card {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.suggestion-card:hover {
+  border-color: #008560;
+  background-color: #f5fff7;
+  transform: translateY(-2px);
 }
 
 .cursor-blink::after {
