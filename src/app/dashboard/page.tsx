@@ -44,8 +44,30 @@ interface ParsedAnswer {
 }
 
 function parseAnswer(answer: string): ParsedAnswer {
-  // Split on "---" separator lines (with surrounding newlines)
-  const parts = answer.split(/\n---\n/);
+  // Primary: split on --- separators (correct model output)
+  let parts = answer.split(/\n---\n/);
+
+  // Fallback: model omitted --- but used ### headings (wrong format, but recoverable)
+  if (parts.length === 1) {
+    const lbIdx  = answer.search(/\n###\s+(?:THE\s+)?LEGAL\s+BASIS/i);
+    const citIdx = answer.search(/\n###\s+FULL\s+CITATIONS/i);
+    const gapIdx = answer.search(/\n###\s+GAPS/i);
+
+    if (lbIdx > -1) {
+      parts = [answer.slice(0, lbIdx)];
+      if (citIdx > -1) {
+        parts.push(answer.slice(lbIdx, citIdx));
+        if (gapIdx > -1) {
+          parts.push(answer.slice(citIdx, gapIdx));
+          parts.push(answer.slice(gapIdx));
+        } else {
+          parts.push(answer.slice(citIdx));
+        }
+      } else {
+        parts.push(answer.slice(lbIdx));
+      }
+    }
+  }
 
   const rawSummary = (parts[0] || '').trim();
   const stateTagMatch = rawSummary.match(/^\[(REQUIRED|PROHIBITED|NOT REQUIRED|CONDITIONAL)\]/);
@@ -57,21 +79,21 @@ function parseAnswer(answer: string): ParsedAnswer {
   let legalBasis = '';
   if (parts[1]) {
     legalBasis = parts[1]
-      .replace(/^\s*###\s+(?:THE )?LEGAL BASIS\s*\n/, '')
+      .replace(/^\s*###\s+(?:THE\s+)?LEGAL\s+BASIS\s*\n/i, '')
       .trim();
   }
 
   let citationsText = '';
   if (parts[2]) {
     citationsText = parts[2]
-      .replace(/^\s*###\s+FULL CITATIONS[^\n]*\n/, '')
+      .replace(/^\s*###\s+FULL\s+CITATIONS[^\n]*\n/i, '')
       .trim();
   }
 
   let gaps = '';
   if (parts[3]) {
     gaps = parts[3]
-      .replace(/^\s*###\s+GAPS\s+(?:AND|&)\s+LIMITS\s*\n/, '')
+      .replace(/^\s*###\s+GAPS[^\n]*\n/i, '')
       .trim();
   }
 
