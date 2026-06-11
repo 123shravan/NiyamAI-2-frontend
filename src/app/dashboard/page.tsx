@@ -365,6 +365,7 @@ function AnswerSectionsView({
   warnings: string[];
   onNewQuery: () => void;
 }) {
+  const [copied, setCopied] = useState(false);
   const parsed = parseAnswer(answer);
   const citationBlocks = parseCitationBlocks(parsed.citationsText);
   const tags = extractTags(query);
@@ -578,20 +579,46 @@ function AnswerSectionsView({
 
         {/* Action buttons */}
         <div className="flex flex-wrap gap-4">
-          <button
-            onClick={() => navigator.clipboard?.writeText(answer)}
-            className="flex items-center gap-2 px-6 py-4 rounded-xl border transition-colors hover:bg-[#c9ffec]"
-            style={{
-              borderColor: '#bccac1',
-              fontFamily: 'var(--font-syne)',
-              fontSize: '14px',
-              fontWeight: 700,
-              color: '#002019',
-            }}
-          >
-            <span className="material-symbols-outlined text-lg">content_copy</span>
-            Copy Analysis
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => {
+                navigator.clipboard?.writeText(answer);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+              }}
+              className="flex items-center gap-2 px-6 py-4 rounded-xl border transition-colors hover:bg-[#c9ffec]"
+              style={{
+                borderColor: copied ? '#008560' : '#bccac1',
+                fontFamily: 'var(--font-syne)',
+                fontSize: '14px',
+                fontWeight: 700,
+                color: copied ? '#008560' : '#002019',
+                transition: 'all 0.2s',
+              }}
+            >
+              <span className="material-symbols-outlined text-lg">
+                {copied ? 'check' : 'content_copy'}
+              </span>
+              {copied ? 'Copied!' : 'Copy Analysis'}
+            </button>
+            {copied && (
+              <div
+                className="absolute -top-9 left-1/2 -translate-x-1/2 px-3 py-1 rounded-lg text-xs font-medium whitespace-nowrap pointer-events-none"
+                style={{
+                  backgroundColor: '#002019',
+                  color: '#ffffff',
+                  fontFamily: 'var(--font-dm-mono)',
+                  animation: 'fadeInUp 0.15s ease forwards',
+                }}
+              >
+                Copied to clipboard
+                <div
+                  className="absolute left-1/2 -translate-x-1/2 -bottom-1 w-2 h-2 rotate-45"
+                  style={{ backgroundColor: '#002019' }}
+                />
+              </div>
+            )}
+          </div>
           <button
             onClick={onNewQuery}
             className="flex items-center gap-2 px-6 py-4 rounded-xl ml-auto"
