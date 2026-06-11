@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useSSEStream } from '@/lib/useSSEStream';
 import api from '@/lib/api';
 import ProfileCompletionModal from '@/components/ProfileCompletionModal';
+import ProfileDrawer from '@/components/ProfileDrawer';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -615,6 +616,7 @@ export default function DashboardPage() {
   const [queryHistory, setQueryHistory] = useState<HistorySummary[]>([]);
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
   const [historyAnswer, setHistoryAnswer] = useState<HistoryItem | null>(null);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
 
   const answerScrollRef = useRef<HTMLDivElement>(null);
 
@@ -734,7 +736,6 @@ export default function DashboardPage() {
 
   const displayAnswer = historyAnswer ? historyAnswer.answer : tokens;
   const displayWarnings = historyAnswer ? [] : warnings;
-  const recentQueries = queryHistory.slice(0, 5);
 
   return (
     <div
@@ -742,31 +743,23 @@ export default function DashboardPage() {
       style={{ backgroundColor: '#e6fff5', color: '#002019' }}
     >
       <ProfileCompletionModal />
+      <ProfileDrawer isOpen={isProfileOpen} onClose={() => setIsProfileOpen(false)} />
 
       {/* ══════════════════════════════════════════════
           SIDEBAR
       ══════════════════════════════════════════════ */}
       <aside
-        className="fixed left-0 top-0 h-full w-[220px] flex flex-col justify-between px-4 border-r z-50 pb-6"
-        style={{
-          backgroundColor: '#e6fff5',
-          borderColor: '#bccac1',
-          paddingTop: '2.5rem',
-        }}
+        className="fixed left-0 top-0 h-full w-[220px] flex flex-col border-r z-50"
+        style={{ backgroundColor: '#e6fff5', borderColor: '#bccac1' }}
       >
-        {/* Top section */}
-        <div className="flex flex-col gap-6">
-          {/* Brand */}
-          <div className="flex items-center gap-1 px-1">
-            <h1
-              className="text-[32px] font-normal leading-none"
-              style={{ fontFamily: 'var(--font-instrument-serif)', color: '#002019' }}
-            >
-              Niyam<span style={{ color: '#008560' }}>AI</span>
-            </h1>
-          </div>
-
-          {/* New Query CTA */}
+        {/* ── Fixed top: brand + new query ── */}
+        <div className="flex flex-col gap-4 px-4 pt-10 pb-3 flex-shrink-0">
+          <h1
+            className="text-[32px] font-normal leading-none px-1"
+            style={{ fontFamily: 'var(--font-instrument-serif)', color: '#002019' }}
+          >
+            Niyam<span style={{ color: '#008560' }}>AI</span>
+          </h1>
           <button
             onClick={handleNewQuery}
             className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl active:scale-95 transition-all"
@@ -781,88 +774,87 @@ export default function DashboardPage() {
             <span className="material-symbols-outlined">add</span>
             New Query
           </button>
-
-          {/* Recent queries nav */}
-          <nav className="flex flex-col gap-1 mt-2">
-            <span
-              className="text-[10px] uppercase tracking-wider mb-1 px-1"
-              style={{ fontFamily: 'var(--font-dm-mono)', color: '#6d7a73' }}
-            >
-              Recent Queries
-            </span>
-
-            {recentQueries.length === 0 && (
-              <div
-                className="px-3 py-2 text-[10px]"
-                style={{ fontFamily: 'var(--font-dm-mono)', color: '#6d7a73' }}
-              >
-                No history yet
-              </div>
-            )}
-
-            {recentQueries.map(item => {
-              const isActive =
-                currentView === 'answer' && submittedQuery === item.query_text;
-              return (
-                <div
-                  key={item.id}
-                  onClick={() => handleHistoryClick(item.id)}
-                  className="flex flex-col gap-1 p-3 cursor-pointer transition-colors"
-                  style={{
-                    backgroundColor: isActive ? '#E1F5EE' : 'transparent',
-                    borderRight: isActive ? '2px solid #008560' : '2px solid transparent',
-                  }}
-                  onMouseEnter={e => {
-                    if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = '#b0efdb';
-                  }}
-                  onMouseLeave={e => {
-                    if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
-                  }}
-                >
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="material-symbols-outlined"
-                      style={{
-                        fontSize: '14px',
-                        color: isActive ? '#008560' : '#6d7a73',
-                      }}
-                    >
-                      chat_bubble
-                    </span>
-                    <span
-                      className="text-[10px]"
-                      style={{ fontFamily: 'var(--font-dm-mono)', color: '#6d7a73' }}
-                    >
-                      {formatRelativeTime(item.created_at)}
-                    </span>
-                    {activeHistoryId === item.id && (
-                      <span
-                        className="text-[9px]"
-                        style={{ color: '#6d7a73', fontFamily: 'var(--font-dm-mono)' }}
-                      >
-                        …
-                      </span>
-                    )}
-                  </div>
-                  <p
-                    className="text-xs font-medium line-clamp-2 leading-tight"
-                    style={{ color: '#002019' }}
-                  >
-                    {item.query_text}
-                  </p>
-                </div>
-              );
-            })}
-          </nav>
         </div>
 
-        {/* Bottom profile section */}
+        {/* ── Scrollable history ── */}
+        <div className="flex flex-col flex-1 min-h-0 px-4 overflow-y-auto custom-scrollbar">
+          <span
+            className="text-[10px] uppercase tracking-wider px-1 pb-1 pt-2 flex-shrink-0 sticky top-0"
+            style={{
+              fontFamily: 'var(--font-dm-mono)',
+              color: '#6d7a73',
+              backgroundColor: '#e6fff5',
+            }}
+          >
+            Recent Queries
+          </span>
+
+          {queryHistory.length === 0 && (
+            <div
+              className="px-3 py-2 text-[10px]"
+              style={{ fontFamily: 'var(--font-dm-mono)', color: '#6d7a73' }}
+            >
+              No history yet
+            </div>
+          )}
+
+          {queryHistory.map(item => {
+            const isActive =
+              currentView === 'answer' && submittedQuery === item.query_text;
+            return (
+              <div
+                key={item.id}
+                onClick={() => handleHistoryClick(item.id)}
+                className="flex flex-col gap-1 p-3 cursor-pointer transition-colors flex-shrink-0"
+                style={{
+                  backgroundColor: isActive ? '#E1F5EE' : 'transparent',
+                  borderRight: isActive ? '2px solid #008560' : '2px solid transparent',
+                }}
+                onMouseEnter={e => {
+                  if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = '#b0efdb';
+                }}
+                onMouseLeave={e => {
+                  if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className="material-symbols-outlined"
+                    style={{ fontSize: '14px', color: isActive ? '#008560' : '#6d7a73' }}
+                  >
+                    chat_bubble
+                  </span>
+                  <span
+                    className="text-[10px]"
+                    style={{ fontFamily: 'var(--font-dm-mono)', color: '#6d7a73' }}
+                  >
+                    {formatRelativeTime(item.created_at)}
+                  </span>
+                  {activeHistoryId === item.id && (
+                    <span style={{ color: '#6d7a73', fontFamily: 'var(--font-dm-mono)', fontSize: '9px' }}>…</span>
+                  )}
+                </div>
+                <p className="text-xs font-medium line-clamp-2 leading-tight" style={{ color: '#002019' }}>
+                  {item.query_text}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* ── Fixed bottom: profile ── */}
         <div
-          className="flex flex-col gap-4 pt-4 border-t"
+          className="flex flex-col gap-3 px-4 pt-4 pb-5 border-t flex-shrink-0"
           style={{ borderColor: '#bccac1' }}
         >
-          <div className="flex items-center gap-3 px-1">
-            {/* Avatar */}
+          {/* Clickable profile row → opens drawer */}
+          <button
+            onClick={() => setIsProfileOpen(true)}
+            className="flex items-center gap-3 px-1 w-full text-left rounded-lg p-1 transition-colors"
+            style={{ backgroundColor: 'transparent' }}
+            onMouseEnter={e => ((e.currentTarget as HTMLElement).style.backgroundColor = '#b0efdb')}
+            onMouseLeave={e => ((e.currentTarget as HTMLElement).style.backgroundColor = 'transparent')}
+          >
             <div
               className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
               style={{ backgroundColor: '#008560' }}
@@ -870,23 +862,17 @@ export default function DashboardPage() {
               {getUserInitials(user)}
             </div>
             <div className="flex flex-col min-w-0">
-              <span
-                className="font-bold text-sm truncate"
-                style={{ color: '#002019' }}
-              >
+              <span className="font-bold text-sm truncate" style={{ color: '#002019' }}>
                 {user?.name || user?.email?.split('@')[0] || 'User'}
               </span>
               <span
                 className="text-[10px] truncate"
-                style={{
-                  fontFamily: 'var(--font-dm-mono)',
-                  color: '#6d7a73',
-                }}
+                style={{ fontFamily: 'var(--font-dm-mono)', color: '#6d7a73' }}
               >
                 {(user as any)?.designation || (user as any)?.org_type || 'Member'}
               </span>
             </div>
-          </div>
+          </button>
 
           <div className="flex items-center justify-between px-1">
             {isAdmin && (
@@ -898,18 +884,16 @@ export default function DashboardPage() {
                 Admin
               </a>
             )}
-            <div className="flex items-center gap-1 ml-auto">
-              <button
-                onClick={handleLogout}
-                className="p-1 transition-colors"
-                title="Sign out"
-                style={{ color: '#3d4943' }}
-                onMouseEnter={e => ((e.currentTarget as HTMLElement).style.color = '#00694c')}
-                onMouseLeave={e => ((e.currentTarget as HTMLElement).style.color = '#3d4943')}
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>logout</span>
-              </button>
-            </div>
+            <button
+              onClick={handleLogout}
+              className="p-1 transition-colors ml-auto"
+              title="Sign out"
+              style={{ color: '#3d4943' }}
+              onMouseEnter={e => ((e.currentTarget as HTMLElement).style.color = '#00694c')}
+              onMouseLeave={e => ((e.currentTarget as HTMLElement).style.color = '#3d4943')}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>logout</span>
+            </button>
           </div>
         </div>
       </aside>
