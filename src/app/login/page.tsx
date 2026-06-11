@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, useRef, Suspense } from 'react';
 import { useAuth } from '@/lib/authContext';
 import { useRouter, useSearchParams } from 'next/navigation';
+
+type WarmupState = 'checking' | 'warming' | 'ready';
 
 function LoginContent() {
   const { sendOTP, login, loginWithPassword, error, clearError, isAuthenticated } = useAuth();
@@ -16,6 +18,50 @@ function LoginContent() {
   const [step, setStep] = useState<'email' | 'otp' | 'password'>('email');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [googleError, setGoogleError] = useState<string | null>(null);
+
+  // Backend warm-up state
+  const [warmup, setWarmup] = useState<WarmupState>('checking');
+  const warmupRef = useRef(false);
+
+  useEffect(() => {
+    if (warmupRef.current) return;
+    warmupRef.current = true;
+
+    const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    let attempts = 0;
+    let timer: ReturnType<typeof setTimeout>;
+
+    const check = async () => {
+      attempts++;
+      // After 2 checks (~4 s) without response, show the warming banner
+      if (attempts === 2) setWarmup('warming');
+
+      try {
+        const res = await fetch(`${backendUrl}/health/auth-ready`, {
+          method: 'GET',
+          cache: 'no-store',
+          signal: AbortSignal.timeout(4000),
+        });
+        if (res.ok) {
+          setWarmup('ready');
+          return;
+        }
+      } catch {
+        // Backend not yet ready — keep polling
+      }
+
+      // Retry every 2 s, up to 90 s total
+      if (attempts < 45) {
+        timer = setTimeout(check, 2000);
+      } else {
+        // Give up waiting and let user try anyway
+        setWarmup('ready');
+      }
+    };
+
+    check();
+    return () => clearTimeout(timer);
+  }, []);
 
   // Redirect if already authenticated (moved to useEffect to avoid render-time redirects)
   useEffect(() => {
@@ -119,6 +165,17 @@ function LoginContent() {
           </p>
         </div>
 
+        {/* Backend warm-up banner */}
+        {warmup === 'warming' && (
+          <div className="mb-4 flex items-center gap-3 rounded-xl bg-blue-900/40 border border-blue-500/30 px-4 py-3 text-blue-200 text-sm animate-fade-in-up">
+            <svg className="w-4 h-4 animate-spin flex-shrink-0" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+            </svg>
+            <span>Server is starting up — this takes about 30 seconds on first visit. Please wait…</span>
+          </div>
+        )}
+
         {/* Login Card */}
         <div className="card-glass p-8 shadow-2xl animate-fade-in-up" style={{ animationDelay: '0.1s' }}>
           {step === 'email' && (
@@ -194,14 +251,16 @@ function LoginContent() {
               </div>
               <button
                 type="submit"
-                disabled={isSubmitting || !email.trim()}
+                disabled={isSubmitting || !email.trim() || warmup === 'warming'}
                 className="w-full btn-primary py-3.5 text-base"
               >
                 {isSubmitting
                   ? 'Sending code...'
-                  : authMode === 'signin'
-                    ? 'Send Sign-In Code'
-                    : 'Send Sign-Up Code'}
+                  : warmup === 'warming'
+                    ? 'Server starting…'
+                    : authMode === 'signin'
+                      ? 'Send Sign-In Code'
+                      : 'Send Sign-Up Code'}
               </button>
               <p className="text-xs text-slate-500 mt-3 text-center">
                 {authMode === 'signin'

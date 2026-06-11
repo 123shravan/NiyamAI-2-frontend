@@ -26,15 +26,11 @@ export default function Home() {
     }
   }, [isAuthenticated, user, isLoading, router]);
 
-  if (!isReady || isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-surface-dim text-on-surface">
-        <div className="text-center">
-          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-          <p className="mt-4 text-on-surface-variant">Loading...</p>
-        </div>
-      </div>
-    );
+  // Only gate on hydration (isReady), not on auth loading.
+  // Auth check completes in background — authenticated users are redirected via useEffect.
+  // This prevents a 30s blank screen when the backend is cold-starting.
+  if (!isReady) {
+    return null;
   }
 
   // Redirect authenticated users to dashboard

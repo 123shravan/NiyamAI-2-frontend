@@ -64,14 +64,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [accessToken]);
 
   const checkSession = async () => {
+    // Abort the session check after 4s so cold-start backends don't freeze the UI.
+    // If backend responds later (backend warms up), the AbortError lands in catch
+    // and we just clear user state — the user can log in normally once the backend is ready.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
     try {
-      const res = await api.post('/auth/token/refresh');
+      const res = await api.post('/auth/token/refresh', {}, { signal: controller.signal });
+      clearTimeout(timeoutId);
       if (res.data?.access_token) {
-        // Store token in state and axios headers
         setAccessToken(res.data.access_token);
         api.defaults.headers.common['Authorization'] = `Bearer ${res.data.access_token}`;
-        
-        // Fetch full profile from API rather than decoding partial JWT payload
         try {
           const meRes = await api.get('/auth/me');
           setUser(meRes.data);
@@ -80,10 +83,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
     } catch {
-      // No valid session
+      // No valid session, or backend is cold-starting (abort) — show UI immediately
       setUser(null);
       setAccessToken(null);
     } finally {
+      clearTimeout(timeoutId);
       setIsLoading(false);
     }
   };
