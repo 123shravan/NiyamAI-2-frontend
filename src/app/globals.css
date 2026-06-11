@@ -97,6 +97,24 @@ body {
   }
 }
 
+/* Cabin scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #bccac1;
+  border-radius: 10px;
+}
+
+/* Cabin loading animations */
+@keyframes cabin-ping {
+  0%, 100% { transform: scale(1); opacity: 0.5; }
+  50% { transform: scale(1.15); opacity: 0.2; }
+}
+
 @layer utilities {
   .text-balance {
     text-wrap: balance;

@@ -5,8 +5,9 @@ import { useAuth } from '@/lib/authContext';
 import { useRouter } from 'next/navigation';
 import { useSSEStream } from '@/lib/useSSEStream';
 import api from '@/lib/api';
-import UserProfileAvatar from '@/components/UserProfileAvatar';
 import ProfileCompletionModal from '@/components/ProfileCompletionModal';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface HistorySummary {
   id: string;
@@ -28,87 +29,678 @@ interface HistoryItem {
   created_at: string;
 }
 
+type ViewState = 'empty' | 'loading' | 'answer';
+
+// ─── Answer Parsing ───────────────────────────────────────────────────────────
+
+interface ParsedAnswer {
+  stateTag: string;
+  summary: string;
+  legalBasis: string;
+  citationsText: string;
+  gaps: string;
+  citationCount: number;
+}
+
+function parseAnswer(answer: string): ParsedAnswer {
+  // Split on "---" separator lines (with surrounding newlines)
+  const parts = answer.split(/\n---\n/);
+
+  const rawSummary = (parts[0] || '').trim();
+  const stateTagMatch = rawSummary.match(/^\[(REQUIRED|PROHIBITED|NOT REQUIRED|CONDITIONAL)\]/);
+  const stateTag = stateTagMatch ? stateTagMatch[1] : '';
+  const summary = rawSummary
+    .replace(/^\[(REQUIRED|PROHIBITED|NOT REQUIRED|CONDITIONAL)\]\s*/, '')
+    .trim();
+
+  let legalBasis = '';
+  if (parts[1]) {
+    legalBasis = parts[1]
+      .replace(/^\s*###\s+(?:THE )?LEGAL BASIS\s*\n/, '')
+      .trim();
+  }
+
+  let citationsText = '';
+  if (parts[2]) {
+    citationsText = parts[2]
+      .replace(/^\s*###\s+FULL CITATIONS[^\n]*\n/, '')
+      .trim();
+  }
+
+  let gaps = '';
+  if (parts[3]) {
+    gaps = parts[3]
+      .replace(/^\s*###\s+GAPS\s+(?:AND|&)\s+LIMITS\s*\n/, '')
+      .trim();
+  }
+
+  const citationCount = (citationsText.match(/\*\*📜/g) || []).length;
+
+  return { stateTag, summary, legalBasis, citationsText, gaps, citationCount };
+}
+
+interface CitationBlock {
+  title: string;
+  quote: string;
+  effectiveDate: string;
+}
+
+function parseCitationBlocks(citationsText: string): CitationBlock[] {
+  const blocks: CitationBlock[] = [];
+  // Split on blank lines before a citation block
+  const rawBlocks = citationsText.split(/\n{2,}(?=\*\*📜)/);
+
+  for (const block of rawBlocks) {
+    if (!block.trim() || !block.includes('📜')) continue;
+
+    const titleMatch = block.match(/\*\*📜\s+(.+?)\*\*/);
+    const title = titleMatch ? titleMatch[1].trim() : '';
+    if (!title) continue;
+
+    const quoteLines = block.match(/^>\s+.+$/gm) || [];
+    const quote = quoteLines.map(l => l.replace(/^>\s+/, '')).join(' ');
+
+    const dateMatch = block.match(/\*\(Effective:\s+(.+?)\)\*/);
+    const effectiveDate = dateMatch ? dateMatch[1].trim() : '';
+
+    blocks.push({ title, quote, effectiveDate });
+  }
+
+  return blocks;
+}
+
+function extractTags(query: string): string[] {
+  const q = query.toLowerCase();
+  const tags: string[] = [];
+  if (q.includes('epr') || q.includes('extended producer')) tags.push('EPR');
+  if (q.includes('pwm') || q.includes('plastic waste')) tags.push('PWM');
+  if (q.includes('e-waste') || q.includes('ewaste') || q.includes('electronic')) tags.push('E-Waste');
+  if (q.includes('battery') || q.includes('batteries')) tags.push('Battery Waste');
+  if (q.includes('hazardous') || q.includes('haz')) tags.push('Hazardous Waste');
+  if (q.includes('single use') || q.includes('single-use')) tags.push('SUP');
+  if (tags.length === 0) tags.push('PWM');
+  return tags.slice(0, 2);
+}
+
+function formatRelativeTime(dateStr: string): string {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffH = Math.floor(diffMs / (1000 * 60 * 60));
+  const diffD = Math.floor(diffH / 24);
+  if (diffH < 1) return 'Just now';
+  if (diffH < 24) return `${diffH}h ago`;
+  if (diffD === 1) return 'Yesterday';
+  if (diffD < 7) return `${diffD} days ago`;
+  return date.toLocaleDateString();
+}
+
+function getUserInitials(user: { name?: string | null; email?: string | null } | null): string {
+  if (!user) return '?';
+  const name = user.name || user.email || '';
+  return name
+    .split(' ')
+    .filter(Boolean)
+    .map(n => n[0])
+    .join('')
+    .substring(0, 2)
+    .toUpperCase() || '?';
+}
+
+// ─── Simple Markdown Renderer ─────────────────────────────────────────────────
+
+function renderInline(text: string): React.ReactNode[] {
+  const parts = text.split(/(\*\*.+?\*\*)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+      return <strong key={i}>{part.slice(2, -2)}</strong>;
+    }
+    return part;
+  });
+}
+
+function SimpleMarkdown({ text }: { text: string }) {
+  if (!text) return null;
+  const lines = text.split('\n');
+  const elements: React.ReactElement[] = [];
+  let inList = false;
+  let listItems: React.ReactElement[] = [];
+  let key = 0;
+
+  const flushList = () => {
+    if (inList && listItems.length > 0) {
+      elements.push(
+        <ul key={key++} className="list-disc pl-5 mb-3 space-y-1">
+          {listItems}
+        </ul>
+      );
+      listItems = [];
+      inList = false;
+    }
+  };
+
+  for (const line of lines) {
+    const isBullet = /^\s*[\*\-]\s+/.test(line);
+    if (isBullet) {
+      inList = true;
+      const content = line.replace(/^\s*[\*\-]\s+/, '');
+      listItems.push(
+        <li key={key++} className="text-sm leading-snug" style={{ color: '#002019' }}>
+          {renderInline(content)}
+        </li>
+      );
+    } else {
+      flushList();
+      if (line.trim()) {
+        elements.push(
+          <p key={key++} className="mb-3 text-sm leading-relaxed" style={{ color: '#002019' }}>
+            {renderInline(line)}
+          </p>
+        );
+      }
+    }
+  }
+  flushList();
+
+  return <div>{elements}</div>;
+}
+
+// ─── State Tag Badge ──────────────────────────────────────────────────────────
+
+const STATE_TAG_STYLES: Record<string, { bg: string; text: string }> = {
+  REQUIRED:     { bg: '#d4edda', text: '#155724' },
+  PROHIBITED:   { bg: '#fde8e8', text: '#721c24' },
+  'NOT REQUIRED': { bg: '#e2e3e5', text: '#383d41' },
+  CONDITIONAL:  { bg: '#FAEEDA', text: '#856404' },
+};
+
+function StateTagBadge({ tag }: { tag: string }) {
+  const style = STATE_TAG_STYLES[tag];
+  if (!style) return null;
+  return (
+    <span
+      className="ml-2 px-2 py-0.5 rounded-full text-[10px] font-medium"
+      style={{
+        backgroundColor: style.bg,
+        color: style.text,
+        fontFamily: 'var(--font-dm-mono)',
+      }}
+    >
+      {tag}
+    </span>
+  );
+}
+
+// ─── Loading State View ───────────────────────────────────────────────────────
+
+type StepStatus = 'pending' | 'active' | 'done';
+
+const STEP_LABELS = [
+  'Query received',
+  'Searching 340+ regulations...',
+  'Retrieving citations',
+  'Structuring answer',
+];
+
+function LoadingStateView({ query, onComplete }: { query: string; onComplete: () => void }) {
+  const [stepStatuses, setStepStatuses] = useState<StepStatus[]>([
+    'active', 'pending', 'pending', 'pending',
+  ]);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
+
+  useEffect(() => {
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    timers.push(setTimeout(() => setStepStatuses(['done', 'active', 'pending', 'pending']), 1200));
+    timers.push(setTimeout(() => setStepStatuses(['done', 'done', 'active', 'pending']), 2400));
+    timers.push(setTimeout(() => setStepStatuses(['done', 'done', 'done', 'active']), 3600));
+    timers.push(setTimeout(() => setStepStatuses(['done', 'done', 'done', 'done']), 4800));
+    timers.push(setTimeout(() => onCompleteRef.current(), 5600));
+    return () => timers.forEach(clearTimeout);
+  }, []);
+
+  return (
+    <div
+      className="absolute inset-0 z-40 flex items-center justify-center backdrop-blur-sm"
+      style={{ backgroundColor: 'rgba(230, 255, 245, 0.95)' }}
+    >
+      <div className="flex flex-col items-center gap-10 max-w-md w-full px-6">
+        <h2
+          className="text-2xl text-center italic leading-snug"
+          style={{ fontFamily: 'var(--font-instrument-serif)', color: '#002019' }}
+        >
+          {query}
+        </h2>
+        <div className="w-full flex flex-col gap-6">
+          {STEP_LABELS.map((label, i) => {
+            const status = stepStatuses[i];
+            return (
+              <div
+                key={i}
+                className="flex items-center gap-4 transition-all duration-300"
+                style={{ opacity: status === 'pending' ? 0.3 : 1 }}
+              >
+                {/* Step icon */}
+                <div
+                  className="relative w-8 h-8 rounded-full border-2 flex items-center justify-center flex-shrink-0"
+                  style={{
+                    borderColor: status === 'done' ? '#00694c' : status === 'active' ? '#008560' : '#6d7a73',
+                    backgroundColor: status === 'done' ? '#00694c' : 'transparent',
+                  }}
+                >
+                  {status === 'done' && (
+                    <span
+                      className="material-symbols-outlined text-white"
+                      style={{ fontSize: '14px' }}
+                    >
+                      check
+                    </span>
+                  )}
+                  {status === 'active' && (
+                    <>
+                      <div
+                        className="absolute inset-0 rounded-full border-2 animate-ping"
+                        style={{ borderColor: '#008560', opacity: 0.4 }}
+                      />
+                      <div
+                        className="w-2 h-2 rounded-full"
+                        style={{ backgroundColor: '#008560' }}
+                      />
+                    </>
+                  )}
+                </div>
+                {/* Step label */}
+                <span
+                  className="text-base"
+                  style={{
+                    fontFamily: 'var(--font-syne)',
+                    fontWeight: status === 'active' ? 700 : 400,
+                    color: status === 'active' ? '#008560' : '#002019',
+                  }}
+                >
+                  {label}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Answer Sections View ─────────────────────────────────────────────────────
+
+function AnswerSectionsView({
+  answer,
+  query,
+  warnings,
+  onNewQuery,
+}: {
+  answer: string;
+  query: string;
+  warnings: string[];
+  onNewQuery: () => void;
+}) {
+  const parsed = parseAnswer(answer);
+  const citationBlocks = parseCitationBlocks(parsed.citationsText);
+  const tags = extractTags(query);
+
+  return (
+    <div className="px-12 pb-8 pt-6">
+      {/* ── Section 1: Summary ─────────────────────────────── */}
+      <section className="mb-12">
+        {/* Query label */}
+        <div className="flex items-center gap-2 mb-2">
+          <span
+            className="text-[10px] tracking-widest uppercase"
+            style={{ fontFamily: 'var(--font-dm-mono)', color: '#008560' }}
+          >
+            Your Query
+          </span>
+        </div>
+
+        {/* Query title + meta row */}
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
+          <h2
+            className="text-3xl leading-tight max-w-3xl"
+            style={{ fontFamily: 'var(--font-instrument-serif)', color: '#002019' }}
+          >
+            {query}
+          </h2>
+          <div className="flex flex-col items-end gap-2 flex-shrink-0">
+            <div className="flex gap-1">
+              {tags.map(tag => (
+                <span
+                  key={tag}
+                  className="px-3 py-1 rounded-full text-[10px] border"
+                  style={{
+                    backgroundColor: '#bbfbe6',
+                    borderColor: '#bccac1',
+                    color: '#3d4943',
+                    fontFamily: 'var(--font-dm-mono)',
+                  }}
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+            {parsed.citationCount > 0 && (
+              <div
+                className="text-[10px]"
+                style={{ fontFamily: 'var(--font-dm-mono)', color: '#6d7a73' }}
+              >
+                {parsed.citationCount} citation{parsed.citationCount !== 1 ? 's' : ''}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Summary card */}
+        <div
+          className="p-6 rounded-xl border"
+          style={{ backgroundColor: '#ffffff', borderColor: '#008560' }}
+        >
+          <div className="flex items-center gap-2 mb-4">
+            <span className="material-symbols-outlined" style={{ color: '#008560' }}>auto_awesome</span>
+            <span
+              className="text-[10px] uppercase tracking-widest"
+              style={{ fontFamily: 'var(--font-dm-mono)', color: '#008560' }}
+            >
+              Summary
+            </span>
+            {parsed.stateTag && <StateTagBadge tag={parsed.stateTag} />}
+          </div>
+          <p
+            className="text-lg leading-relaxed font-medium"
+            style={{ fontFamily: 'var(--font-syne)', color: '#002019' }}
+          >
+            {parsed.summary || answer}
+          </p>
+        </div>
+
+        {/* Verification warnings */}
+        {warnings.length > 0 && (
+          <div
+            className="mt-4 p-4 rounded-xl border flex gap-3"
+            style={{ backgroundColor: '#FAEEDA', borderColor: '#EF9F27' }}
+          >
+            <span className="material-symbols-outlined" style={{ color: '#856404' }}>warning</span>
+            <div>
+              <p
+                className="text-xs font-medium uppercase mb-1"
+                style={{ fontFamily: 'var(--font-dm-mono)', color: '#856404' }}
+              >
+                Please Note
+              </p>
+              <p className="text-sm" style={{ color: '#7a5a00' }}>
+                There may be exceptions or additional provisions relevant to this answer.
+              </p>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* ── Section 2: Legal Basis ─────────────────────────── */}
+      {parsed.legalBasis && (
+        <section className="mb-12">
+          <div className="flex items-center gap-2 mb-6">
+            <span className="material-symbols-outlined" style={{ color: '#002019' }}>list_alt</span>
+            <h3
+              className="font-bold text-lg"
+              style={{ fontFamily: 'var(--font-syne)', color: '#002019' }}
+            >
+              The Legal Basis
+            </h3>
+          </div>
+          <div
+            className="p-6 rounded-xl border"
+            style={{ backgroundColor: '#ffffff', borderColor: '#bccac1' }}
+          >
+            <SimpleMarkdown text={parsed.legalBasis} />
+          </div>
+        </section>
+      )}
+
+      {/* ── Section 3: Full Citations ───────────────────────── */}
+      {citationBlocks.length > 0 && (
+        <section className="mb-12">
+          <div className="flex items-center gap-2 mb-6">
+            <span className="material-symbols-outlined" style={{ color: '#002019' }}>verified</span>
+            <h3
+              className="font-bold text-lg"
+              style={{ fontFamily: 'var(--font-syne)', color: '#002019' }}
+            >
+              Full Citations ({parsed.citationCount})
+            </h3>
+          </div>
+          <div className="flex flex-col gap-4">
+            {citationBlocks.map((citation, i) => (
+              <div
+                key={i}
+                className="p-6 rounded-xl border transition-colors hover:border-[#008560]"
+                style={{ backgroundColor: '#ffffff', borderColor: '#bccac1' }}
+              >
+                {/* Citation header */}
+                <div className="flex items-start justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="material-symbols-outlined"
+                      style={{ color: '#008560', fontSize: '18px' }}
+                    >
+                      verified
+                    </span>
+                    <span
+                      className="text-sm"
+                      style={{ fontFamily: 'var(--font-dm-mono)', color: '#008560' }}
+                    >
+                      {citation.title}
+                    </span>
+                  </div>
+                  <span
+                    className="text-[10px]"
+                    style={{ fontFamily: 'var(--font-dm-mono)', color: '#6d7a73' }}
+                  >
+                    Source: MoEFCC
+                  </span>
+                </div>
+
+                {/* Blockquote */}
+                <div
+                  className="pl-4 border-l-2 italic text-sm leading-relaxed mb-4"
+                  style={{
+                    borderColor: '#b5f5e0',
+                    color: '#3d4943',
+                  }}
+                >
+                  &ldquo;{citation.quote}&rdquo;
+                </div>
+
+                {/* Effective date */}
+                {citation.effectiveDate && (
+                  <div
+                    className="text-[10px]"
+                    style={{ fontFamily: 'var(--font-dm-mono)', color: '#6d7a73' }}
+                  >
+                    Effective: {citation.effectiveDate}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ── Section 4: Gaps & Limits + Actions ─────────────── */}
+      <section className="flex flex-col gap-6">
+        {parsed.gaps && (
+          <div
+            className="p-6 rounded-xl border flex gap-4"
+            style={{ backgroundColor: '#ffffff', borderColor: '#bccac1' }}
+          >
+            <span className="material-symbols-outlined flex-shrink-0" style={{ color: '#008560' }}>info</span>
+            <div className="flex flex-col gap-1">
+              <span
+                className="text-[10px] font-bold uppercase"
+                style={{ fontFamily: 'var(--font-dm-mono)', color: '#008560' }}
+              >
+                Limitations &amp; Scope
+              </span>
+              <p className="text-sm leading-snug" style={{ color: '#002019' }}>
+                {parsed.gaps}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Action buttons */}
+        <div className="flex flex-wrap gap-4">
+          <button
+            onClick={() => navigator.clipboard?.writeText(answer)}
+            className="flex items-center gap-2 px-6 py-4 rounded-xl border transition-colors hover:bg-[#c9ffec]"
+            style={{
+              borderColor: '#bccac1',
+              fontFamily: 'var(--font-syne)',
+              fontSize: '14px',
+              fontWeight: 700,
+              color: '#002019',
+            }}
+          >
+            <span className="material-symbols-outlined text-lg">content_copy</span>
+            Copy Analysis
+          </button>
+          <button
+            onClick={onNewQuery}
+            className="flex items-center gap-2 px-6 py-4 rounded-xl ml-auto"
+            style={{
+              backgroundColor: '#008560',
+              color: '#f5fff7',
+              fontFamily: 'var(--font-syne)',
+              fontSize: '14px',
+              fontWeight: 700,
+            }}
+          >
+            <span className="material-symbols-outlined text-lg">add</span>
+            New Query
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+// ─── Suggested Queries ────────────────────────────────────────────────────────
+
+const SUGGESTED_QUERIES = [
+  { tag: 'PWM Rule 2022', text: 'How do I register as a Small Scale recycler?' },
+  { tag: 'E-Waste', text: 'Timeline for solar panel recycling targets' },
+  { tag: 'MoEFCC', text: 'Consent to Establish (CTE) validity periods' },
+  { tag: 'Hazardous Waste', text: 'Manifest requirements for inter-state transit' },
+];
+
+// ─── Main Dashboard Page ──────────────────────────────────────────────────────
+
 export default function DashboardPage() {
   const { user, isAuthenticated, isLoading, isAdmin, logout } = useAuth();
   const router = useRouter();
   const {
     isStreaming, tokens, warnings, error,
-    cached, latencyMs, startStream, stopStream, resetStream,
+    startStream, resetStream,
   } = useSSEStream();
 
-  const [query, setQuery] = useState('');
+  const [currentView, setCurrentView] = useState<ViewState>('empty');
+  const [inputValue, setInputValue] = useState('');
+  const [submittedQuery, setSubmittedQuery] = useState('');
+  const [animationComplete, setAnimationComplete] = useState(false);
   const [queryHistory, setQueryHistory] = useState<HistorySummary[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyError, setHistoryError] = useState<string | null>(null);
-  const [selectedHistory, setSelectedHistory] = useState<HistoryItem | null>(null);
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
-  const answerRef = useRef<HTMLDivElement>(null);
+  const [historyAnswer, setHistoryAnswer] = useState<HistoryItem | null>(null);
 
-  // Redirect if not authenticated
+  const answerScrollRef = useRef<HTMLDivElement>(null);
+
+  // Redirect unauthenticated users
   useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
-      router.push('/login');
-    }
+    if (!isLoading && !isAuthenticated) router.push('/login');
   }, [isAuthenticated, isLoading, router]);
 
-  // Auto-scroll answer pane
+  // Transition from loading → answer when BOTH animation and streaming are done
   useEffect(() => {
-    if (answerRef.current) {
-      answerRef.current.scrollTop = answerRef.current.scrollHeight;
+    if (currentView !== 'loading') return;
+    if (animationComplete && !isStreaming && (tokens || error)) {
+      setCurrentView('answer');
     }
-  }, [tokens, selectedHistory]);
+  }, [animationComplete, isStreaming, tokens, error, currentView]);
+
+  // If an error occurs, show it in the answer view without waiting for animation
+  useEffect(() => {
+    if (currentView === 'loading' && error) {
+      const t = setTimeout(() => setCurrentView('answer'), 500);
+      return () => clearTimeout(t);
+    }
+  }, [error, currentView]);
 
   const loadHistory = useCallback(async () => {
     if (!isAuthenticated) return;
-
-    setHistoryLoading(true);
-    setHistoryError(null);
-
     try {
-      const res = await api.get('/query/history', {
-        params: { page: 1, limit: 20 },
-      });
-      const items: HistorySummary[] = res.data?.queries || [];
-      setQueryHistory(items);
-    } catch (err) {
-      setHistoryError('Could not load your search history. Please try again.');
-    } finally {
-      setHistoryLoading(false);
+      const res = await api.get('/query/history', { params: { page: 1, limit: 20 } });
+      setQueryHistory(res.data?.queries || []);
+    } catch {
+      // silent – sidebar history is non-critical
     }
   }, [isAuthenticated]);
 
   useEffect(() => {
-    if (isAuthenticated) {
-      loadHistory();
-    }
+    if (isAuthenticated) loadHistory();
   }, [isAuthenticated, loadHistory]);
 
-  const handleHistoryClick = useCallback(async (historyId: string) => {
-    if (isStreaming) return;
-
-    setActiveHistoryId(historyId);
-    setHistoryError(null);
-
-    try {
-      const res = await api.get(`/query/history/${historyId}`);
-      const item = res.data as HistoryItem;
-      setSelectedHistory(item);
-      setQuery(item.query_text);
+  const submitQuery = useCallback(
+    (q: string) => {
+      if (!q.trim() || isStreaming) return;
+      setSubmittedQuery(q);
+      setHistoryAnswer(null);
+      setAnimationComplete(false);
+      setCurrentView('loading');
+      setInputValue('');
       resetStream();
-    } catch (err) {
-      setHistoryError('Could not open this history item. Please try again.');
-    } finally {
-      setActiveHistoryId(null);
-    }
-  }, [isStreaming, resetStream]);
+      startStream(q).then(() => loadHistory());
+    },
+    [isStreaming, resetStream, startStream, loadHistory]
+  );
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!query.trim() || isStreaming) return;
+    submitQuery(inputValue);
+  };
 
-    setSelectedHistory(null);
-    await startStream(query);
-    await loadHistory();
+  const handleSuggestionClick = (text: string) => submitQuery(text);
+
+  const handleHistoryClick = useCallback(
+    async (historyId: string) => {
+      if (isStreaming) return;
+      setActiveHistoryId(historyId);
+      try {
+        const res = await api.get(`/query/history/${historyId}`);
+        const item = res.data as HistoryItem;
+        setHistoryAnswer(item);
+        setSubmittedQuery(item.query_text);
+        resetStream();
+        setCurrentView('answer');
+      } catch {
+        // silent
+      } finally {
+        setActiveHistoryId(null);
+      }
+    },
+    [isStreaming, resetStream]
+  );
+
+  const handleNewQuery = () => {
+    resetStream();
+    setHistoryAnswer(null);
+    setSubmittedQuery('');
+    setCurrentView('empty');
+    setAnimationComplete(false);
+    setInputValue('');
   };
 
   const handleLogout = async () => {
@@ -116,267 +708,384 @@ export default function DashboardPage() {
     router.push('/login');
   };
 
-  // Suggested questions for new users
-  const suggestedQueries = [
-    "What are EPR obligations for producers?",
-    "What is the minimum thickness for carry bags?",
-    "What are the penalties for non-compliance?",
-    "Do plastic bag manufacturers need registration?",
-    "Which single-use plastics are banned?",
-  ];
-
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="text-center animate-pulse-soft">
-          <div className="text-2xl font-bold text-slate-800 mb-2">Niyam AI</div>
-          <div className="text-slate-500 text-sm">Loading your dashboard...</div>
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: '#e6fff5' }}
+      >
+        <div className="text-center">
+          <div
+            className="text-3xl mb-2"
+            style={{ fontFamily: 'var(--font-instrument-serif)', color: '#00694c' }}
+          >
+            Niyam<span style={{ color: '#008560' }}>AI</span>
+          </div>
+          <div
+            className="text-sm"
+            style={{ fontFamily: 'var(--font-syne)', color: '#6d7a73' }}
+          >
+            Loading your workspace...
+          </div>
         </div>
       </div>
     );
   }
 
-  const displayedAnswer = selectedHistory ? selectedHistory.answer : tokens;
+  const displayAnswer = historyAnswer ? historyAnswer.answer : tokens;
+  const displayWarnings = historyAnswer ? [] : warnings;
+  const recentQueries = queryHistory.slice(0, 5);
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div
+      className="flex h-screen overflow-hidden"
+      style={{ backgroundColor: '#e6fff5', color: '#002019' }}
+    >
       <ProfileCompletionModal />
-      
-      {/* ── Header ────────────────────────────────────────── */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-20">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-md shadow-blue-500/20">
-              <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-              </svg>
+
+      {/* ══════════════════════════════════════════════
+          SIDEBAR
+      ══════════════════════════════════════════════ */}
+      <aside
+        className="fixed left-0 top-0 h-full w-[220px] flex flex-col justify-between px-4 border-r z-50 pb-6"
+        style={{
+          backgroundColor: '#e6fff5',
+          borderColor: '#bccac1',
+          paddingTop: '2.5rem',
+        }}
+      >
+        {/* Top section */}
+        <div className="flex flex-col gap-6">
+          {/* Brand */}
+          <div className="flex items-center gap-1 px-1">
+            <h1
+              className="text-[32px] font-normal leading-none"
+              style={{ fontFamily: 'var(--font-instrument-serif)', color: '#002019' }}
+            >
+              Niyam<span style={{ color: '#008560' }}>AI</span>
+            </h1>
+          </div>
+
+          {/* New Query CTA */}
+          <button
+            onClick={handleNewQuery}
+            className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl active:scale-95 transition-all"
+            style={{
+              backgroundColor: '#008560',
+              color: '#f5fff7',
+              fontFamily: 'var(--font-syne)',
+              fontSize: '14px',
+              fontWeight: 700,
+            }}
+          >
+            <span className="material-symbols-outlined">add</span>
+            New Query
+          </button>
+
+          {/* Recent queries nav */}
+          <nav className="flex flex-col gap-1 mt-2">
+            <span
+              className="text-[10px] uppercase tracking-wider mb-1 px-1"
+              style={{ fontFamily: 'var(--font-dm-mono)', color: '#6d7a73' }}
+            >
+              Recent Queries
+            </span>
+
+            {recentQueries.length === 0 && (
+              <div
+                className="px-3 py-2 text-[10px]"
+                style={{ fontFamily: 'var(--font-dm-mono)', color: '#6d7a73' }}
+              >
+                No history yet
+              </div>
+            )}
+
+            {recentQueries.map(item => {
+              const isActive =
+                currentView === 'answer' && submittedQuery === item.query_text;
+              return (
+                <div
+                  key={item.id}
+                  onClick={() => handleHistoryClick(item.id)}
+                  className="flex flex-col gap-1 p-3 cursor-pointer transition-colors"
+                  style={{
+                    backgroundColor: isActive ? '#E1F5EE' : 'transparent',
+                    borderRight: isActive ? '2px solid #008560' : '2px solid transparent',
+                  }}
+                  onMouseEnter={e => {
+                    if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = '#b0efdb';
+                  }}
+                  onMouseLeave={e => {
+                    if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
+                  }}
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="material-symbols-outlined"
+                      style={{
+                        fontSize: '14px',
+                        color: isActive ? '#008560' : '#6d7a73',
+                      }}
+                    >
+                      chat_bubble
+                    </span>
+                    <span
+                      className="text-[10px]"
+                      style={{ fontFamily: 'var(--font-dm-mono)', color: '#6d7a73' }}
+                    >
+                      {formatRelativeTime(item.created_at)}
+                    </span>
+                    {activeHistoryId === item.id && (
+                      <span
+                        className="text-[9px]"
+                        style={{ color: '#6d7a73', fontFamily: 'var(--font-dm-mono)' }}
+                      >
+                        …
+                      </span>
+                    )}
+                  </div>
+                  <p
+                    className="text-xs font-medium line-clamp-2 leading-tight"
+                    style={{ color: '#002019' }}
+                  >
+                    {item.query_text}
+                  </p>
+                </div>
+              );
+            })}
+          </nav>
+        </div>
+
+        {/* Bottom profile section */}
+        <div
+          className="flex flex-col gap-4 pt-4 border-t"
+          style={{ borderColor: '#bccac1' }}
+        >
+          <div className="flex items-center gap-3 px-1">
+            {/* Avatar */}
+            <div
+              className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
+              style={{ backgroundColor: '#008560' }}
+            >
+              {getUserInitials(user)}
             </div>
-            <div>
-              <h1 className="text-lg font-bold text-slate-800">Niyam AI</h1>
-              <p className="text-xs text-slate-400 hidden sm:block">Plastic Waste Management Rules</p>
+            <div className="flex flex-col min-w-0">
+              <span
+                className="font-bold text-sm truncate"
+                style={{ color: '#002019' }}
+              >
+                {user?.name || user?.email?.split('@')[0] || 'User'}
+              </span>
+              <span
+                className="text-[10px] truncate"
+                style={{
+                  fontFamily: 'var(--font-dm-mono)',
+                  color: '#6d7a73',
+                }}
+              >
+                {(user as any)?.designation || (user as any)?.org_type || 'Member'}
+              </span>
             </div>
           </div>
-          <div className="flex items-center gap-4">
+
+          <div className="flex items-center justify-between px-1">
             {isAdmin && (
-              <a 
-                href="/admin" 
-                className="text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg shadow-sm transition-colors"
+              <a
+                href="/admin"
+                className="text-[10px] font-bold uppercase tracking-wider"
+                style={{ fontFamily: 'var(--font-dm-mono)', color: '#008560' }}
               >
-                Admin Portal
+                Admin
               </a>
             )}
-            <UserProfileAvatar />
+            <div className="flex items-center gap-1 ml-auto">
+              <button
+                onClick={handleLogout}
+                className="p-1 transition-colors"
+                title="Sign out"
+                style={{ color: '#3d4943' }}
+                onMouseEnter={e => ((e.currentTarget as HTMLElement).style.color = '#00694c')}
+                onMouseLeave={e => ((e.currentTarget as HTMLElement).style.color = '#3d4943')}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>logout</span>
+              </button>
+            </div>
           </div>
         </div>
-      </header>
+      </aside>
 
-      {/* ── Main Content ──────────────────────────────────── */}
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
-        {/* Query Input */}
-        <div className="mb-8 animate-fade-in-up">
-          <form onSubmit={handleSubmit} className="relative">
-            <div className="bg-white rounded-2xl shadow-lg shadow-slate-200/50 border border-slate-200 p-2 flex gap-2">
+      {/* ══════════════════════════════════════════════
+          MAIN PANEL
+      ══════════════════════════════════════════════ */}
+      <main
+        className="ml-[220px] flex-1 flex flex-col h-full relative"
+        style={{ backgroundColor: '#ffffff' }}
+      >
+        {/* ── Answer View (scrollable) ── */}
+        <div
+          ref={answerScrollRef}
+          className={`flex-1 overflow-y-auto custom-scrollbar ${currentView === 'answer' ? 'block' : 'hidden'}`}
+          style={{ paddingBottom: '160px' }}
+        >
+          {currentView === 'answer' && (displayAnswer || error) && (
+            <>
+              {error ? (
+                <div className="px-12 pt-6">
+                  <div
+                    className="p-4 rounded-xl border text-sm"
+                    style={{
+                      backgroundColor: '#fff5f5',
+                      borderColor: '#fca5a5',
+                      color: '#991b1b',
+                    }}
+                  >
+                    <p className="font-medium mb-1">Something went wrong</p>
+                    <p>{error}</p>
+                  </div>
+                </div>
+              ) : (
+                <AnswerSectionsView
+                  answer={displayAnswer!}
+                  query={submittedQuery}
+                  warnings={displayWarnings}
+                  onNewQuery={handleNewQuery}
+                />
+              )}
+            </>
+          )}
+        </div>
+
+        {/* ── Empty State ── */}
+        {currentView === 'empty' && (
+          <div
+            className="absolute inset-0 z-30 flex items-center justify-center animate-fade-in-up"
+            style={{ backgroundColor: '#ffffff' }}
+          >
+            <div className="flex flex-col items-center gap-10 max-w-2xl w-full px-6 text-center">
+              {/* Icon */}
+              <div
+                className="w-20 h-20 rounded-xl flex items-center justify-center border"
+                style={{ backgroundColor: '#bbfbe6', borderColor: '#008560' }}
+              >
+                <span
+                  className="material-symbols-outlined"
+                  style={{ fontSize: '40px', color: '#008560' }}
+                >
+                  gavel
+                </span>
+              </div>
+
+              {/* Headline */}
+              <div className="flex flex-col gap-4">
+                <h2
+                  className="text-5xl italic"
+                  style={{ fontFamily: 'var(--font-instrument-serif)', color: '#002019' }}
+                >
+                  Ask Niyam anything
+                </h2>
+                <p
+                  className="text-lg font-medium max-w-lg mx-auto"
+                  style={{ fontFamily: 'var(--font-syne)', color: '#3d4943' }}
+                >
+                  Get deep, structured answers backed by citations from over 340+
+                  Indian environmental and industrial regulations.
+                </p>
+              </div>
+
+              {/* Suggestion cards */}
+              <div className="grid grid-cols-2 gap-4 w-full mt-2">
+                {SUGGESTED_QUERIES.map((sq, i) => (
+                  <div
+                    key={i}
+                    onClick={() => handleSuggestionClick(sq.text)}
+                    className="p-6 rounded-xl text-left cursor-pointer border transition-all group"
+                    style={{ backgroundColor: '#ffffff', borderColor: '#bccac1' }}
+                    onMouseEnter={e => {
+                      const el = e.currentTarget as HTMLElement;
+                      el.style.borderColor = '#008560';
+                      el.style.backgroundColor = '#f5fff7';
+                      el.style.transform = 'translateY(-2px)';
+                    }}
+                    onMouseLeave={e => {
+                      const el = e.currentTarget as HTMLElement;
+                      el.style.borderColor = '#bccac1';
+                      el.style.backgroundColor = '#ffffff';
+                      el.style.transform = 'translateY(0)';
+                    }}
+                  >
+                    <span
+                      className="px-3 py-1 rounded-full text-[10px] mb-4 inline-block"
+                      style={{
+                        backgroundColor: '#bbfbe6',
+                        color: '#008560',
+                        fontFamily: 'var(--font-dm-mono)',
+                      }}
+                    >
+                      {sq.tag}
+                    </span>
+                    <p
+                      className="font-bold text-sm"
+                      style={{ color: '#002019', fontFamily: 'var(--font-syne)' }}
+                    >
+                      {sq.text}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Loading State ── */}
+        {currentView === 'loading' && (
+          <LoadingStateView
+            query={submittedQuery}
+            onComplete={() => setAnimationComplete(true)}
+          />
+        )}
+
+        {/* ── Bottom Input Bar ── */}
+        <div
+          className="absolute bottom-0 left-0 w-full border-t z-50 p-6"
+          style={{
+            backgroundColor: 'rgba(255, 255, 255, 0.85)',
+            backdropFilter: 'blur(12px)',
+            borderColor: '#bccac1',
+          }}
+        >
+          <div className="max-w-4xl mx-auto">
+            <form onSubmit={handleSubmit} className="relative">
               <input
-                id="query-input"
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Ask a compliance question about Plastic Waste Management Rules..."
-                className="flex-1 px-4 py-3 text-slate-800 placeholder:text-slate-400 bg-transparent outline-none text-base"
+                className="w-full rounded-xl py-4 px-6 pr-16 text-base outline-none transition-all"
+                style={{
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #bccac1',
+                  color: '#002019',
+                  fontFamily: 'var(--font-syne)',
+                }}
+                value={inputValue}
+                onChange={e => setInputValue(e.target.value)}
+                placeholder="Ask a compliance question about EPR, PWM, or E-Waste..."
                 disabled={isStreaming}
-                autoFocus
+                onFocus={e => ((e.target as HTMLInputElement).style.borderColor = '#008560')}
+                onBlur={e => ((e.target as HTMLInputElement).style.borderColor = '#bccac1')}
               />
               <button
                 type="submit"
-                disabled={isStreaming || !query.trim()}
-                className="btn-primary px-6 py-3 flex items-center gap-2 whitespace-nowrap"
+                disabled={isStreaming || !inputValue.trim()}
+                className="absolute right-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-lg flex items-center justify-center transition-all active:scale-95 disabled:opacity-50"
+                style={{ backgroundColor: '#008560', color: '#f5fff7' }}
               >
                 {isStreaming ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Searching...
-                  </>
+                  <div className="w-4 h-4 border-2 rounded-full animate-spin" style={{ borderColor: 'rgba(255,255,255,0.3)', borderTopColor: '#ffffff' }} />
                 ) : (
-                  <>
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                    </svg>
-                    Ask
-                  </>
+                  <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>send</span>
                 )}
               </button>
-            </div>
-          </form>
-
-          {/* Streaming status */}
-          {isStreaming && (
-            <div className="mt-3 flex items-center gap-2 text-sm text-blue-600">
-              <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-              Searching the regulations for your answer...
-            </div>
-          )}
-        </div>
-
-        {/* Suggested queries — show when no answer */}
-        {!displayedAnswer && !isStreaming && !error && !selectedHistory && (
-          <div className="mb-8 animate-fade-in-up" style={{ animationDelay: '0.2s' }}>
-            <p className="text-sm font-medium text-slate-500 mb-3">Try asking:</p>
-            <div className="flex flex-wrap gap-2">
-              {suggestedQueries.map((q, i) => (
-                <button
-                  key={i}
-                  onClick={() => { setQuery(q); }}
-                  className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm text-slate-600 hover:bg-blue-50 hover:border-blue-200 hover:text-blue-700 transition-all"
-                >
-                  {q}
-                </button>
-              ))}
-            </div>
+            </form>
           </div>
-        )}
-
-        {/* Answer Section */}
-        {(displayedAnswer || isStreaming || error) && (
-          <div className="animate-fade-in-up">
-            {/* Answer card */}
-            <div className="bg-white rounded-2xl shadow-lg shadow-slate-200/50 border border-slate-200 overflow-hidden">
-              {/* Answer header */}
-              <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-lg bg-blue-100 flex items-center justify-center">
-                    <svg className="w-3.5 h-3.5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                  </div>
-                  <span className="text-sm font-medium text-slate-700">Answer</span>
-                  {selectedHistory && (
-                    <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-700 rounded-full">
-                      History
-                    </span>
-                  )}
-                  {cached && (
-                    <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">
-                      Cached
-                    </span>
-                  )}
-                </div>
-                {(selectedHistory?.latency_total_ms ?? latencyMs) !== null && (
-                  <span className="text-xs text-slate-400">
-                    {(((selectedHistory?.latency_total_ms ?? latencyMs) || 0) / 1000).toFixed(1)}s
-                  </span>
-                )}
-              </div>
-
-              {/* Answer body */}
-              <div ref={answerRef} className="px-6 py-5 max-h-[60vh] overflow-y-auto">
-                {error ? (
-                  <div className="text-red-600 bg-red-50 border border-red-200 rounded-xl p-4">
-                    <p className="font-medium mb-1">Something went wrong</p>
-                    <p className="text-sm">{error}</p>
-                  </div>
-                ) : (
-                  <div className="prose prose-slate prose-sm max-w-none">
-                    <div className={`whitespace-pre-wrap leading-7 text-slate-700 ${isStreaming ? 'cursor-blink' : ''}`}>
-                      {displayedAnswer}
-                    </div>
-                  </div>
-                )}
-
-                {/* Verification warnings */}
-                {warnings.length > 0 && (
-                  <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-xl">
-                    <p className="text-sm font-medium text-amber-800 mb-1">
-                      ⚠️ Please note:
-                    </p>
-                    {warnings.map((w, i) => (
-                      <p key={i} className="text-sm text-amber-700">
-                        There may be exceptions or additional provisions relevant to this answer.
-                      </p>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Actions */}
-              {!isStreaming && displayedAnswer && (
-                <div className="border-t border-slate-100 px-6 py-3 flex justify-between items-center">
-                  {selectedHistory ? (
-                    <p className="text-xs text-slate-400">
-                      {new Date(selectedHistory.created_at).toLocaleString()}
-                    </p>
-                  ) : (
-                    <span />
-                  )}
-                  <button
-                    onClick={() => { setSelectedHistory(null); resetStream(); setQuery(''); }}
-                    className="text-sm text-slate-500 hover:text-blue-600 font-medium transition-colors"
-                  >
-                    Ask another question →
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Query History */}
-        <div className="mt-8 animate-fade-in-up" style={{ animationDelay: '0.3s' }}>
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-sm font-medium text-slate-500">Your search history</p>
-            <button
-              onClick={loadHistory}
-              className="text-xs text-slate-500 hover:text-blue-600 font-medium"
-              disabled={historyLoading}
-            >
-              {historyLoading ? 'Refreshing...' : 'Refresh'}
-            </button>
-          </div>
-
-          {historyError && (
-            <div className="mb-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl p-3">
-              {historyError}
-            </div>
-          )}
-
-          {queryHistory.length === 0 ? (
-            <div className="text-sm text-slate-500 bg-white border border-slate-200 rounded-xl p-4">
-              No history yet. Ask your first compliance question to start tracking.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {queryHistory.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => handleHistoryClick(item.id)}
-                  className="w-full text-left px-4 py-3 bg-white border border-slate-200 rounded-xl hover:bg-blue-50 hover:border-blue-200 transition-all"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm text-slate-700 font-medium truncate">{item.query_text}</p>
-                    <span className="text-[11px] text-slate-400 whitespace-nowrap">
-                      {new Date(item.created_at).toLocaleString()}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500 mt-1 line-clamp-2">{item.answer_preview}</p>
-                  <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-400">
-                    {item.cache_hit && <span className="px-1.5 py-0.5 rounded bg-green-100 text-green-700">cached</span>}
-                    {item.latency_total_ms !== null && (
-                      <span>{(item.latency_total_ms / 1000).toFixed(1)}s</span>
-                    )}
-                    {activeHistoryId === item.id && <span>loading...</span>}
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
         </div>
       </main>
-
-      {/* Footer */}
-      <footer className="text-center py-6 text-xs text-slate-400">
-        Niyam AI v3.0 · Answers are based on Plastic Waste Management Rules 2016 and amendments.
-        <br />
-        Always verify with a qualified compliance advisor.
-      </footer>
     </div>
   );
 }
