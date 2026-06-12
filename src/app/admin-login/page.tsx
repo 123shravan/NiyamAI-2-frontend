@@ -19,8 +19,16 @@ export default function AdminLoginPage() {
     setError('');
 
     try {
-      await api.post('/admin/auth/login', { username: username.trim(), password }, { withCredentials: true });
-      router.push('/admin');
+      const res = await api.post('/admin/auth/login', { username: username.trim(), password }, { withCredentials: true });
+      const token = res.data?.access_token;
+      if (token) {
+        // Set cookie on the frontend domain so Next.js middleware can read it
+        const maxAge = 8 * 60 * 60; // 8 hours
+        const isSecure = window.location.protocol === 'https:';
+        document.cookie = `admin_access_token=${token}; path=/; max-age=${maxAge}; SameSite=Lax${isSecure ? '; Secure' : ''}`;
+      }
+      // Use full navigation (not router.push) so middleware re-evaluates with the new cookie
+      window.location.href = '/admin';
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Invalid username or password.');
     } finally {

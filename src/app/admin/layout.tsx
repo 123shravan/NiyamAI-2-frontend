@@ -18,7 +18,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     try {
       await api.post('/admin/auth/logout', {}, { withCredentials: true });
     } catch { /* ignore */ }
-    router.push('/admin-login');
+    // Clear the frontend-domain cookie
+    document.cookie = 'admin_access_token=; path=/; max-age=0; SameSite=Lax';
+    window.location.href = '/admin-login';
   };
 
   return (
