@@ -991,10 +991,10 @@ export default function DashboardPage() {
         {/* ── Empty State ── */}
         {currentView === 'empty' && (
           <div
-            className="absolute inset-0 z-30 flex items-center justify-center animate-fade-in-up"
+            className="absolute inset-x-0 top-0 bottom-[88px] z-30 flex items-center justify-center animate-fade-in-up overflow-y-auto"
             style={{ backgroundColor: '#ffffff' }}
           >
-            <div className="flex flex-col items-center gap-10 max-w-2xl w-full px-6 text-center">
+            <div className="flex flex-col items-center gap-6 max-w-2xl w-full px-6 text-center py-6">
               {/* Icon */}
               <div
                 className="w-20 h-20 rounded-xl flex items-center justify-center border"
