@@ -6,6 +6,9 @@ import { useRouter, useSearchParams } from 'next/navigation';
 
 type WarmupState = 'checking' | 'warming' | 'ready';
 
+// Typing this in the email field routes to the admin login portal
+const ADMIN_PORTAL_KEY = 'NIYAM_CTRL';
+
 function LoginContent() {
   const { sendOTP, login, loginWithPassword, error, clearError, isAuthenticated } = useAuth();
   const router = useRouter();
@@ -84,6 +87,12 @@ function LoginContent() {
     e.preventDefault();
     if (!email.trim()) return;
 
+    // Secret key: redirect to admin portal without sending OTP
+    if (email.trim() === ADMIN_PORTAL_KEY) {
+      router.push('/admin-login');
+      return;
+    }
+
     setIsSubmitting(true);
     clearError();
     setGoogleError(null);
@@ -136,7 +145,6 @@ function LoginContent() {
 
     try {
       await loginWithPassword(email, password);
-      // Admin dashboard will be automatically determined and redirected by AdminGuard or generic redirect
       router.push('/admin');
     } catch {
       // Error is set in context
@@ -240,7 +248,9 @@ function LoginContent() {
                 </label>
                 <input
                   id="email"
-                  type="email"
+                  type="text"
+                  inputMode="email"
+                  autoComplete="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="your@company.com"
