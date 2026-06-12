@@ -18,10 +18,11 @@ api.interceptors.response.use(
     const originalRequest = error.config;
     const url = originalRequest.url || '';
 
-    // Skip auto-refresh for auth endpoints — they handle their own 401s
+    // Skip auto-refresh for auth endpoints and admin endpoints — they handle their own 401s
     const isAuthEndpoint = url.startsWith('/auth/');
+    const isAdminEndpoint = url.startsWith('/admin/');
 
-    if (error.response?.status === 401 && !originalRequest._retry && !isAuthEndpoint) {
+    if (error.response?.status === 401 && !originalRequest._retry && !isAuthEndpoint && !isAdminEndpoint) {
       originalRequest._retry = true;
 
       try {
