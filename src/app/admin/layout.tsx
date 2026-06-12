@@ -4,22 +4,28 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import api from '@/lib/api';
 
+function getAdminAuthHeaders() {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('admin_access_token') : null;
+  return token ? { headers: { Authorization: `Bearer ${token}` } } : { withCredentials: true };
+}
+
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [username, setUsername] = useState<string | null>(null);
 
   useEffect(() => {
-    api.get('/admin/auth/me', { withCredentials: true })
+    api.get('/admin/auth/me', getAdminAuthHeaders())
       .then((res) => setUsername(res.data.username))
       .catch(() => router.push('/admin-login'));
   }, [router]);
 
   const handleLogout = async () => {
     try {
-      await api.post('/admin/auth/logout', {}, { withCredentials: true });
+      await api.post('/admin/auth/logout', {}, getAdminAuthHeaders());
     } catch { /* ignore */ }
-    // Clear the frontend-domain cookie
+    // Clear frontend-domain cookie and localStorage token
     document.cookie = 'admin_access_token=; path=/; max-age=0; SameSite=Lax';
+    localStorage.removeItem('admin_access_token');
     window.location.href = '/admin-login';
   };
 

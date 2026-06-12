@@ -56,6 +56,12 @@ interface HealthData {
 
 // ── Helpers ────────────────────────────────────────────────────
 
+function adminConfig(extra?: Record<string, unknown>) {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('admin_access_token') : null;
+  if (token) return { ...extra, headers: { Authorization: `Bearer ${token}` } };
+  return { ...extra, withCredentials: true };
+}
+
 function fmt(dt: string | null) {
   if (!dt) return '—';
   return new Date(dt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
@@ -80,7 +86,7 @@ function EditUserModal({ user, onClose, onSave }: { user: User; onClose: () => v
     setSaving(true);
     setErr('');
     try {
-      const res = await api.put(`/admin/users/${user.id}`, { name, plan, is_active: isActive }, { withCredentials: true });
+      const res = await api.put(`/admin/users/${user.id}`, { name, plan, is_active: isActive }, adminConfig());
       onSave({ ...user, ...res.data.user });
       onClose();
     } catch (e: any) {
@@ -188,7 +194,7 @@ export default function AdminDashboard() {
   const loadUsers = useCallback(async (search = '') => {
     setUsersLoading(true);
     try {
-      const res = await api.get('/admin/users', { params: { search: search || undefined, limit: 200 }, withCredentials: true });
+      const res = await api.get('/admin/users', adminConfig({ params: { search: search || undefined, limit: 200 } }));
       setUsers(res.data.users);
       setUserTotal(res.data.total);
     } catch { /* handled by layout redirect */ }
@@ -201,7 +207,7 @@ export default function AdminDashboard() {
     try {
       const params: any = { limit: 200 };
       if (userId) params.user_id = userId;
-      const res = await api.get('/admin/queries', { params, withCredentials: true });
+      const res = await api.get('/admin/queries', adminConfig({ params }));
       setQueries(res.data.queries);
       setQueryTotal(res.data.total);
     } catch { }
@@ -212,7 +218,7 @@ export default function AdminDashboard() {
   const loadHealth = useCallback(async () => {
     setHealthLoading(true);
     try {
-      const res = await api.get('/admin/health', { withCredentials: true });
+      const res = await api.get('/admin/health', adminConfig());
       setHealth(res.data);
     } catch { }
     finally { setHealthLoading(false); }
@@ -236,7 +242,7 @@ export default function AdminDashboard() {
     if (!confirm(`Delete user ${email} and ALL their data? This cannot be undone.`)) return;
     setDeletingUserId(userId);
     try {
-      await api.delete(`/admin/users/${userId}`, { withCredentials: true });
+      await api.delete(`/admin/users/${userId}`, adminConfig());
       setUsers(prev => prev.filter(u => u.id !== userId));
       setUserTotal(prev => prev - 1);
     } catch (e: any) {
@@ -250,7 +256,7 @@ export default function AdminDashboard() {
     if (!confirm('Delete this query record?')) return;
     setDeletingQueryId(queryId);
     try {
-      await api.delete(`/admin/queries/${queryId}`, { withCredentials: true });
+      await api.delete(`/admin/queries/${queryId}`, adminConfig());
       setQueries(prev => prev.filter(q => q.id !== queryId));
       setQueryTotal(prev => prev - 1);
     } catch (e: any) {
