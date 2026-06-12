@@ -141,10 +141,8 @@ function QueryModal({ query, onClose }: { query: Query; onClose: () => void }) {
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
       <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-2xl p-6 max-h-[80vh] flex flex-col">
         <div className="flex items-start justify-between mb-4">
-          <div>
-            <p className="text-xs text-slate-400">{query.user_email} · {fmt(query.created_at)}</p>
-          </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white ml-4">✕</button>
+          <p className="text-xs text-slate-400">{query.user_email} · {fmt(query.created_at)}</p>
+          <button onClick={onClose} className="text-slate-400 hover:text-white ml-4 text-lg leading-none">✕</button>
         </div>
         <div className="overflow-y-auto flex-1 space-y-4">
           <div>
@@ -168,7 +166,7 @@ function QueryModal({ query, onClose }: { query: Query; onClose: () => void }) {
 // ── Main Page ──────────────────────────────────────────────────
 
 export default function AdminDashboard() {
-  const [tab, setTab] = useState<'users' | 'queries' | 'health'>('users');
+  const [tab, setTab] = useState<'users' | 'health'>('users');
 
   // Users state
   const [users, setUsers] = useState<User[]>([]);
@@ -178,11 +176,10 @@ export default function AdminDashboard() {
   const [editUser, setEditUser] = useState<User | null>(null);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
 
-  // Queries state
+  // Selected user → inline queries panel
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [queries, setQueries] = useState<Query[]>([]);
-  const [queryUserFilter, setQueryUserFilter] = useState('');
   const [queriesLoading, setQueriesLoading] = useState(false);
-  const [queryTotal, setQueryTotal] = useState(0);
   const [viewQuery, setViewQuery] = useState<Query | null>(null);
   const [deletingQueryId, setDeletingQueryId] = useState<string | null>(null);
 
@@ -197,19 +194,17 @@ export default function AdminDashboard() {
       const res = await api.get('/admin/users', adminConfig({ params: { search: search || undefined, limit: 200 } }));
       setUsers(res.data.users);
       setUserTotal(res.data.total);
-    } catch { /* handled by layout redirect */ }
+    } catch { }
     finally { setUsersLoading(false); }
   }, []);
 
-  // ── Load queries ───────────────────────────────────────────
-  const loadQueries = useCallback(async (userId = '') => {
+  // ── Load queries for a specific user ──────────────────────
+  const loadUserQueries = useCallback(async (userId: string) => {
     setQueriesLoading(true);
+    setQueries([]);
     try {
-      const params: any = { limit: 200 };
-      if (userId) params.user_id = userId;
-      const res = await api.get('/admin/queries', adminConfig({ params }));
+      const res = await api.get('/admin/queries', adminConfig({ params: { user_id: userId, limit: 200 } }));
       setQueries(res.data.queries);
-      setQueryTotal(res.data.total);
     } catch { }
     finally { setQueriesLoading(false); }
   }, []);
@@ -224,12 +219,22 @@ export default function AdminDashboard() {
     finally { setHealthLoading(false); }
   }, []);
 
-  // Initial load on tab switch
   useEffect(() => {
-    if (tab === 'users') loadUsers(userSearch);
-    if (tab === 'queries') loadQueries();
+    if (tab === 'users') loadUsers();
     if (tab === 'health') loadHealth();
   }, [tab]);
+
+  // ── Select user → show inline queries ─────────────────────
+  const handleSelectUser = (user: User) => {
+    if (selectedUser?.id === user.id) {
+      // Click same user again → collapse
+      setSelectedUser(null);
+      setQueries([]);
+    } else {
+      setSelectedUser(user);
+      loadUserQueries(user.id);
+    }
+  };
 
   // ── Handlers ──────────────────────────────────────────────
 
@@ -238,18 +243,28 @@ export default function AdminDashboard() {
     loadUsers(userSearch);
   };
 
-  const handleDeleteUser = async (userId: string, email: string) => {
+  const handleDeleteUser = async (userId: string, email: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Don't trigger row selection
     if (!confirm(`Delete user ${email} and ALL their data? This cannot be undone.`)) return;
     setDeletingUserId(userId);
     try {
       await api.delete(`/admin/users/${userId}`, adminConfig());
       setUsers(prev => prev.filter(u => u.id !== userId));
       setUserTotal(prev => prev - 1);
+      if (selectedUser?.id === userId) {
+        setSelectedUser(null);
+        setQueries([]);
+      }
     } catch (e: any) {
       alert(e.response?.data?.detail || 'Delete failed.');
     } finally {
       setDeletingUserId(null);
     }
+  };
+
+  const handleEditUser = (user: User, e: React.MouseEvent) => {
+    e.stopPropagation(); // Don't trigger row selection
+    setEditUser(user);
   };
 
   const handleDeleteQuery = async (queryId: string) => {
@@ -258,7 +273,12 @@ export default function AdminDashboard() {
     try {
       await api.delete(`/admin/queries/${queryId}`, adminConfig());
       setQueries(prev => prev.filter(q => q.id !== queryId));
-      setQueryTotal(prev => prev - 1);
+      // Update query count on the user row
+      if (selectedUser) {
+        setUsers(prev => prev.map(u =>
+          u.id === selectedUser.id ? { ...u, query_count: u.query_count - 1 } : u
+        ));
+      }
     } catch (e: any) {
       alert(e.response?.data?.detail || 'Delete failed.');
     } finally {
@@ -266,20 +286,12 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleViewUserQueries = (userId: string) => {
-    setQueryUserFilter(userId);
-    setTab('queries');
-    loadQueries(userId);
-  };
-
   // ── Tab button ─────────────────────────────────────────────
   const TabBtn = ({ id, label, icon }: { id: typeof tab; label: string; icon: React.ReactNode }) => (
     <button
       onClick={() => setTab(id)}
       className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-        tab === id
-          ? 'bg-blue-600 text-white'
-          : 'text-slate-400 hover:text-white hover:bg-slate-800'
+        tab === id ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'
       }`}
     >
       {icon}
@@ -306,17 +318,11 @@ export default function AdminDashboard() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
           </svg>
         } />
-        <TabBtn id="queries" label={`Queries (${queryTotal})`} icon={
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-          </svg>
-        } />
         <TabBtn id="health" label="System Health" icon={
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
           </svg>
         } />
-
         <div className="ml-auto">
           {tab === 'health' && (
             <button onClick={loadHealth} className="text-xs text-slate-400 hover:text-white border border-slate-700 px-3 py-1.5 rounded-lg transition-colors">
@@ -328,8 +334,9 @@ export default function AdminDashboard() {
 
       {/* ── USERS TAB ─────────────────────────────────────── */}
       {tab === 'users' && (
-        <div>
-          <form onSubmit={handleUserSearchSubmit} className="flex gap-2 mb-4">
+        <div className="space-y-4">
+          {/* Search */}
+          <form onSubmit={handleUserSearchSubmit} className="flex gap-2">
             <input
               value={userSearch}
               onChange={e => setUserSearch(e.target.value)}
@@ -338,11 +345,15 @@ export default function AdminDashboard() {
             />
             <button type="submit" className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm text-white transition-colors">Search</button>
             {userSearch && (
-              <button type="button" onClick={() => { setUserSearch(''); loadUsers(''); }}
+              <button type="button" onClick={() => { setUserSearch(''); loadUsers(''); setSelectedUser(null); setQueries([]); }}
                 className="px-3 py-2 text-slate-400 hover:text-white text-sm">Clear</button>
             )}
           </form>
 
+          {/* Hint */}
+          <p className="text-xs text-slate-500">Click a user row to view their queries.</p>
+
+          {/* Users table */}
           {usersLoading ? (
             <div className="text-slate-500 text-sm py-8 text-center">Loading users…</div>
           ) : (
@@ -360,7 +371,15 @@ export default function AdminDashboard() {
                     <tr><td colSpan={11} className="text-center text-slate-500 py-10">No users found.</td></tr>
                   )}
                   {users.map(u => (
-                    <tr key={u.id} className="border-b border-slate-800/50 hover:bg-slate-900/30 transition-colors">
+                    <tr
+                      key={u.id}
+                      onClick={() => handleSelectUser(u)}
+                      className={`border-b border-slate-800/50 cursor-pointer transition-colors ${
+                        selectedUser?.id === u.id
+                          ? 'bg-blue-600/10 border-l-2 border-l-blue-500'
+                          : 'hover:bg-slate-900/40'
+                      }`}
+                    >
                       <td className="px-3 py-3 text-slate-200 font-medium">{u.email}</td>
                       <td className="px-3 py-3 text-slate-400">{u.name ?? '—'}</td>
                       <td className="px-3 py-3 text-slate-400 max-w-[140px] truncate">{u.org_name ?? '—'}</td>
@@ -377,10 +396,9 @@ export default function AdminDashboard() {
                         </span>
                       </td>
                       <td className="px-3 py-3 text-center">
-                        <button onClick={() => handleViewUserQueries(u.id)}
-                          className="text-blue-400 hover:text-blue-300 font-medium transition-colors">
+                        <span className={`font-medium text-sm ${u.query_count > 0 ? 'text-blue-400' : 'text-slate-500'}`}>
                           {u.query_count}
-                        </button>
+                        </span>
                       </td>
                       <td className="px-3 py-3 text-slate-500 text-xs whitespace-nowrap">{fmt(u.created_at)}</td>
                       <td className="px-3 py-3 text-slate-500 text-xs whitespace-nowrap">{fmt(u.last_login)}</td>
@@ -388,12 +406,13 @@ export default function AdminDashboard() {
                       <td className="px-3 py-3 text-slate-500 font-mono text-xs">{u.last_login_ip ?? '—'}</td>
                       <td className="px-3 py-3">
                         <div className="flex items-center gap-2">
-                          <button onClick={() => setEditUser(u)}
+                          <button
+                            onClick={(e) => handleEditUser(u, e)}
                             className="text-xs text-slate-400 hover:text-white border border-slate-700 px-2 py-1 rounded transition-colors">
                             Edit
                           </button>
                           <button
-                            onClick={() => handleDeleteUser(u.id, u.email)}
+                            onClick={(e) => handleDeleteUser(u.id, u.email, e)}
                             disabled={deletingUserId === u.id}
                             className="text-xs text-red-500 hover:text-red-400 border border-red-900/50 px-2 py-1 rounded transition-colors disabled:opacity-50">
                             {deletingUserId === u.id ? '…' : 'Delete'}
@@ -406,80 +425,79 @@ export default function AdminDashboard() {
               </table>
             </div>
           )}
-        </div>
-      )}
 
-      {/* ── QUERIES TAB ───────────────────────────────────── */}
-      {tab === 'queries' && (
-        <div>
-          <div className="flex gap-2 mb-4 items-center">
-            <input
-              value={queryUserFilter}
-              onChange={e => setQueryUserFilter(e.target.value)}
-              placeholder="Filter by user ID (paste from users tab)…"
-              className="bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-sm text-white placeholder:text-slate-500 flex-1 max-w-sm font-mono"
-            />
-            <button onClick={() => loadQueries(queryUserFilter)}
-              className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-sm text-white transition-colors">
-              Filter
-            </button>
-            {queryUserFilter && (
-              <button onClick={() => { setQueryUserFilter(''); loadQueries(''); }}
-                className="px-3 py-2 text-slate-400 hover:text-white text-sm">Clear</button>
-            )}
-            <span className="text-slate-500 text-xs ml-auto">{queryTotal} total</span>
-          </div>
-
-          {queriesLoading ? (
-            <div className="text-slate-500 text-sm py-8 text-center">Loading queries…</div>
-          ) : (
-            <div className="overflow-x-auto rounded-xl border border-slate-800">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-800 bg-slate-900/50">
-                    {['User', 'Query', 'Date', 'Latency', 'Cache', 'Actions'].map(h => (
-                      <th key={h} className="text-left text-xs text-slate-400 font-medium px-3 py-3">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {queries.length === 0 && (
-                    <tr><td colSpan={6} className="text-center text-slate-500 py-10">No queries found.</td></tr>
+          {/* ── Inline Queries Panel ──────────────────────── */}
+          {selectedUser && (
+            <div className="rounded-xl border border-blue-500/30 bg-slate-900/60">
+              {/* Panel header */}
+              <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+                <div className="flex items-center gap-3">
+                  <svg className="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                  </svg>
+                  <span className="text-sm font-medium text-white">
+                    Queries — <span className="text-blue-400">{selectedUser.email}</span>
+                  </span>
+                  {!queriesLoading && (
+                    <span className="text-xs text-slate-500">{queries.length} records</span>
                   )}
-                  {queries.map(q => (
-                    <tr key={q.id} className="border-b border-slate-800/50 hover:bg-slate-900/30 transition-colors">
-                      <td className="px-3 py-3 text-slate-400 text-xs whitespace-nowrap">
-                        <div>{q.user_email}</div>
-                        {q.user_name && <div className="text-slate-600">{q.user_name}</div>}
-                      </td>
-                      <td className="px-3 py-3 text-slate-300 max-w-xs">
-                        <span className="line-clamp-2">{q.query_text}</span>
-                      </td>
-                      <td className="px-3 py-3 text-slate-500 text-xs whitespace-nowrap">{fmt(q.created_at)}</td>
-                      <td className="px-3 py-3 text-slate-500 text-xs">{q.latency_total_ms ?? '—'}ms</td>
-                      <td className="px-3 py-3">
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${q.cache_hit ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-500'}`}>
-                          {q.cache_hit ? 'hit' : 'miss'}
-                        </span>
-                      </td>
-                      <td className="px-3 py-3">
-                        <div className="flex gap-2">
-                          <button onClick={() => setViewQuery(q)}
-                            className="text-xs text-blue-400 hover:text-blue-300 border border-blue-900/50 px-2 py-1 rounded transition-colors">
-                            View
-                          </button>
-                          <button
-                            onClick={() => handleDeleteQuery(q.id)}
-                            disabled={deletingQueryId === q.id}
-                            className="text-xs text-red-500 hover:text-red-400 border border-red-900/50 px-2 py-1 rounded transition-colors disabled:opacity-50">
-                            {deletingQueryId === q.id ? '…' : 'Delete'}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                </div>
+                <button
+                  onClick={() => { setSelectedUser(null); setQueries([]); }}
+                  className="text-slate-500 hover:text-white transition-colors text-lg leading-none"
+                >✕</button>
+              </div>
+
+              {/* Query rows */}
+              {queriesLoading ? (
+                <div className="py-8 text-center text-slate-500 text-sm">Loading queries…</div>
+              ) : queries.length === 0 ? (
+                <div className="py-8 text-center text-slate-500 text-sm">No queries yet for this user.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-800 bg-slate-900/30">
+                        {['#', 'Query', 'Date', 'Latency', 'Cache', 'Actions'].map(h => (
+                          <th key={h} className="text-left text-xs text-slate-400 font-medium px-3 py-2">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {queries.map((q, i) => (
+                        <tr key={q.id} className="border-b border-slate-800/40 hover:bg-slate-800/30 transition-colors">
+                          <td className="px-3 py-2.5 text-slate-600 text-xs">{i + 1}</td>
+                          <td className="px-3 py-2.5 text-slate-300 max-w-md">
+                            <span className="line-clamp-2 text-xs leading-relaxed">{q.query_text}</span>
+                          </td>
+                          <td className="px-3 py-2.5 text-slate-500 text-xs whitespace-nowrap">{fmt(q.created_at)}</td>
+                          <td className="px-3 py-2.5 text-slate-500 text-xs">{q.latency_total_ms ?? '—'}ms</td>
+                          <td className="px-3 py-2.5">
+                            <span className={`text-xs px-1.5 py-0.5 rounded-full ${q.cache_hit ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-500'}`}>
+                              {q.cache_hit ? 'hit' : 'miss'}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <div className="flex gap-1.5">
+                              <button
+                                onClick={() => setViewQuery(q)}
+                                className="text-xs text-blue-400 hover:text-blue-300 border border-blue-900/50 px-2 py-0.5 rounded transition-colors">
+                                View
+                              </button>
+                              <button
+                                onClick={() => handleDeleteQuery(q.id)}
+                                disabled={deletingQueryId === q.id}
+                                className="text-xs text-red-500 hover:text-red-400 border border-red-900/50 px-2 py-0.5 rounded transition-colors disabled:opacity-50">
+                                {deletingQueryId === q.id ? '…' : 'Del'}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -493,7 +511,6 @@ export default function AdminDashboard() {
           )}
           {health && (
             <div className="space-y-6">
-              {/* Status row */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {[
                   { label: 'Database', value: health.db, ok: health.db === 'healthy' },
@@ -503,7 +520,7 @@ export default function AdminDashboard() {
                 ].map(item => (
                   <div key={item.label} className="bg-slate-900 border border-slate-800 rounded-xl p-4">
                     <p className="text-xs text-slate-500 mb-1">{item.label}</p>
-                    <p className="text-sm font-medium text-white flex items-center">
+                    <p className="text-sm font-medium flex items-center">
                       <StatusDot ok={item.ok} />
                       <span className={item.ok ? 'text-emerald-400' : 'text-red-400'}>{item.value}</span>
                     </p>
@@ -511,7 +528,6 @@ export default function AdminDashboard() {
                 ))}
               </div>
 
-              {/* User stats */}
               <div>
                 <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-3">Users</h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -529,7 +545,6 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
-              {/* Query stats */}
               <div>
                 <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-3">Queries</h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -547,7 +562,6 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
-              {/* Cache */}
               <div>
                 <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-3">Cache</h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
