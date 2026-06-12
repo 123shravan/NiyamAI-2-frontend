@@ -798,7 +798,7 @@ export default function DashboardPage() {
           SIDEBAR
       ══════════════════════════════════════════════ */}
       <aside
-        className="fixed left-0 top-0 h-full w-[220px] flex flex-col border-r z-50"
+        className="fixed left-0 top-0 h-full w-[270px] flex flex-col border-r z-50"
         style={{ backgroundColor: '#e6fff5', borderColor: '#bccac1' }}
       >
         {/* ── Fixed top: brand + new query ── */}
@@ -951,7 +951,7 @@ export default function DashboardPage() {
           MAIN PANEL
       ══════════════════════════════════════════════ */}
       <main
-        className="ml-[220px] flex-1 flex flex-col h-full relative"
+        className="ml-[270px] flex-1 flex flex-col h-full relative"
         style={{ backgroundColor: '#ffffff' }}
       >
         {/* ── Answer View (scrollable) ── */}
