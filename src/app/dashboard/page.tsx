@@ -693,8 +693,18 @@ export default function DashboardPage() {
   const loadHistory = useCallback(async () => {
     if (!isAuthenticated) return;
     try {
-      const res = await api.get('/query/history', { params: { page: 1, limit: 20 } });
-      setQueryHistory(res.data?.queries || []);
+      const PAGE_SIZE = 100;
+      let allQueries: HistorySummary[] = [];
+      let page = 1;
+      while (true) {
+        const res = await api.get('/query/history', { params: { page, limit: PAGE_SIZE } });
+        const data = res.data;
+        const queries: HistorySummary[] = data?.queries || [];
+        allQueries = allQueries.concat(queries);
+        if (queries.length < PAGE_SIZE || allQueries.length >= (data?.total ?? 0)) break;
+        page++;
+      }
+      setQueryHistory(allQueries);
     } catch {
       // silent – sidebar history is non-critical
     }
