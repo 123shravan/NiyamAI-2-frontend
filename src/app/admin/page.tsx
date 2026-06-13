@@ -71,7 +71,7 @@ interface AuditLog {
 }
 
 interface Announcement {
-  id: number;
+  id: string;
   message: string;
   created_by: string;
   created_at: string;
@@ -80,9 +80,7 @@ interface Announcement {
 // ── Helpers ────────────────────────────────────────────────────
 
 function adminConfig(extra?: Record<string, unknown>) {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('admin_access_token') : null;
-  if (token) return { ...extra, headers: { Authorization: `Bearer ${token}` } };
-  return { ...extra, withCredentials: true };
+  return extra ?? {};
 }
 
 function fmt(dt: string | null) {

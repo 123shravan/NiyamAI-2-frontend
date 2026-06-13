@@ -26,9 +26,6 @@ export default function AdminLoginPage() {
         const maxAge = 8 * 60 * 60; // 8 hours
         const isSecure = window.location.protocol === 'https:';
         document.cookie = `admin_access_token=${token}; path=/; max-age=${maxAge}; SameSite=Lax${isSecure ? '; Secure' : ''}`;
-        // Also store in localStorage so API calls can send it as Authorization header
-        // (cookies are domain-scoped: the Vercel cookie never reaches the Railway backend)
-        localStorage.setItem('admin_access_token', token);
       }
       // Use full navigation (not router.push) so middleware re-evaluates with the new cookie
       window.location.href = '/admin';
