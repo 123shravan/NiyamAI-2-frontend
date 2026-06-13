@@ -668,6 +668,9 @@ export default function DashboardPage() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [announcement, setAnnouncement] = useState<string | null>(null);
   const [announcementDismissed, setAnnouncementDismissed] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [notifications, setNotifications] = useState<{ id: number; message: string; created_at: string }[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const answerScrollRef = useRef<HTMLDivElement>(null);
 
@@ -719,6 +722,18 @@ export default function DashboardPage() {
   useEffect(() => {
     api.get('/admin/announcement/public').then(res => {
       if (res.data?.announcement?.message) setAnnouncement(res.data.announcement.message);
+    }).catch(() => {});
+
+    api.get('/admin/announcement/history').then(res => {
+      const list = res.data?.announcements ?? [];
+      setNotifications(list);
+      // unread = items newer than last time user opened the panel
+      const lastSeen = localStorage.getItem('notif_last_seen');
+      if (!lastSeen) {
+        setUnreadCount(list.length);
+      } else {
+        setUnreadCount(list.filter((n: { created_at: string }) => new Date(n.created_at) > new Date(lastSeen)).length);
+      }
     }).catch(() => {});
   }, []);
 
@@ -951,18 +966,95 @@ export default function DashboardPage() {
                 Admin
               </a>
             )}
-            <button
-              onClick={handleLogout}
-              className="p-1 transition-colors ml-auto"
-              title="Sign out"
-              style={{ color: '#3d4943' }}
-              onMouseEnter={e => ((e.currentTarget as HTMLElement).style.color = '#00694c')}
-              onMouseLeave={e => ((e.currentTarget as HTMLElement).style.color = '#3d4943')}
-            >
-              <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>logout</span>
-            </button>
+            <div className="flex items-center gap-1 ml-auto">
+              {/* Bell */}
+              <button
+                onClick={() => {
+                  setNotifOpen(o => !o);
+                  localStorage.setItem('notif_last_seen', new Date().toISOString());
+                  setUnreadCount(0);
+                }}
+                className="relative p-1.5 rounded-lg transition-colors"
+                title="Notifications"
+                style={{ color: '#3d4943' }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = '#00694c'; (e.currentTarget as HTMLElement).style.backgroundColor = '#b0efdb'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = '#3d4943'; (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>notifications</span>
+                {unreadCount > 0 && (
+                  <span className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full text-[9px] font-bold flex items-center justify-center"
+                    style={{ backgroundColor: '#008560', color: '#fff' }}>
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={handleLogout}
+                className="p-1.5 rounded-lg transition-colors"
+                title="Sign out"
+                style={{ color: '#3d4943' }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = '#00694c'; (e.currentTarget as HTMLElement).style.backgroundColor = '#b0efdb'; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = '#3d4943'; (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: '20px' }}>logout</span>
+              </button>
+            </div>
           </div>
         </div>
+
+        {/* ── Notification Panel ── */}
+        {notifOpen && (
+          <div
+            className="absolute left-full bottom-0 mb-2 ml-2 w-80 rounded-2xl shadow-2xl z-[400] overflow-hidden"
+            style={{ background: '#f5fff7', border: '1px solid #bccac1', bottom: '90px', left: '16px' }}
+          >
+            <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid #d4ede2', background: 'linear-gradient(135deg, #002019 0%, #003d2e 100%)' }}>
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined" style={{ fontSize: '16px', color: '#00cc77' }}>notifications</span>
+                <span className="text-sm font-semibold" style={{ color: '#bbfbe6', fontFamily: 'var(--font-syne)' }}>Notifications</span>
+              </div>
+              <button onClick={() => setNotifOpen(false)} className="text-xs" style={{ color: '#6d7a73' }}
+                onMouseEnter={e => ((e.currentTarget as HTMLElement).style.color = '#bbfbe6')}
+                onMouseLeave={e => ((e.currentTarget as HTMLElement).style.color = '#6d7a73')}>✕</button>
+            </div>
+
+            {notifications.length === 0 ? (
+              <div className="px-4 py-8 text-center">
+                <span className="material-symbols-outlined" style={{ fontSize: '32px', color: '#bccac1' }}>notifications_off</span>
+                <p className="text-xs mt-2" style={{ color: '#6d7a73', fontFamily: 'var(--font-dm-mono)' }}>No announcements yet</p>
+              </div>
+            ) : (
+              <div className="max-h-80 overflow-y-auto">
+                {notifications.map((n, i) => {
+                  const date = new Date(n.created_at);
+                  const isNew = (() => {
+                    const last = localStorage.getItem('notif_last_seen');
+                    return last ? date > new Date(last) : true;
+                  })();
+                  return (
+                    <div key={n.id} className="px-4 py-3 flex gap-3" style={{ borderBottom: i < notifications.length - 1 ? '1px solid #d4ede2' : 'none', backgroundColor: isNew ? '#edfff5' : '#f5fff7' }}>
+                      <div className="flex-shrink-0 mt-0.5 w-7 h-7 rounded-lg flex items-center justify-center" style={{ backgroundColor: '#e6fff5', border: '1px solid #bccac1' }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: '14px', color: '#008560' }}>campaign</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[10px] uppercase tracking-wider mb-0.5" style={{ color: '#008560', fontFamily: 'var(--font-dm-mono)' }}>
+                          Announcement {isNew && <span className="ml-1 px-1.5 py-0.5 rounded-full text-[8px]" style={{ backgroundColor: '#008560', color: '#fff' }}>NEW</span>}
+                        </p>
+                        <p className="text-xs leading-relaxed" style={{ color: '#002019', fontFamily: 'var(--font-syne)' }}>{n.message}</p>
+                        <p className="text-[10px] mt-1" style={{ color: '#6d7a73', fontFamily: 'var(--font-dm-mono)' }}>
+                          {date.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+                <div className="px-4 py-2 text-center">
+                  <p className="text-[9px]" style={{ color: '#6d7a73', fontFamily: 'var(--font-dm-mono)' }}>Announcements expire after 2 days</p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </aside>
 
       {/* ── Announcement Overlay ── */}
