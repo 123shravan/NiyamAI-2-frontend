@@ -965,6 +965,53 @@ export default function DashboardPage() {
         </div>
       </aside>
 
+      {/* ── Announcement Overlay ── */}
+      {announcement && !announcementDismissed && (
+        <div
+          className="fixed inset-0 z-[300] flex items-start justify-center"
+          style={{ paddingTop: '72px', pointerEvents: 'none' }}
+        >
+          <div
+            className="relative mx-4 max-w-xl w-full rounded-2xl shadow-2xl px-6 py-5"
+            style={{
+              background: 'linear-gradient(135deg, #002019 0%, #003d2e 60%, #005a41 100%)',
+              border: '1px solid rgba(0,204,119,0.35)',
+              pointerEvents: 'auto',
+              boxShadow: '0 8px 40px rgba(0,0,0,0.45), 0 0 0 1px rgba(0,204,119,0.2)',
+            }}
+          >
+            {/* Glow */}
+            <div className="absolute inset-0 rounded-2xl overflow-hidden pointer-events-none">
+              <div style={{ position: 'absolute', top: '-40px', right: '-40px', width: '120px', height: '120px', borderRadius: '50%', background: 'radial-gradient(circle, rgba(0,204,119,0.15) 0%, transparent 70%)' }} />
+            </div>
+
+            {/* Close button */}
+            <button
+              onClick={() => setAnnouncementDismissed(true)}
+              className="absolute top-3 right-3 w-7 h-7 flex items-center justify-center rounded-full transition-colors"
+              style={{ color: '#6d7a73', backgroundColor: 'rgba(255,255,255,0.05)' }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(255,255,255,0.12)'; (e.currentTarget as HTMLElement).style.color = '#bbfbe6'; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(255,255,255,0.05)'; (e.currentTarget as HTMLElement).style.color = '#6d7a73'; }}
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                <path d="M1 1l10 10M11 1L1 11" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+              </svg>
+            </button>
+
+            {/* Content */}
+            <div className="flex items-start gap-4 relative z-10">
+              <div className="flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center" style={{ backgroundColor: 'rgba(0,204,119,0.15)', border: '1px solid rgba(0,204,119,0.3)' }}>
+                <span className="material-symbols-outlined" style={{ fontSize: '18px', color: '#00cc77' }}>campaign</span>
+              </div>
+              <div className="flex-1 min-w-0 pr-4">
+                <p className="text-[10px] uppercase tracking-widest mb-1.5" style={{ color: '#00cc77', fontFamily: 'var(--font-dm-mono)' }}>Announcement</p>
+                <p className="text-sm leading-relaxed" style={{ color: '#bbfbe6', fontFamily: 'var(--font-syne)' }}>{announcement}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ══════════════════════════════════════════════
           MAIN PANEL
       ══════════════════════════════════════════════ */}
@@ -972,18 +1019,6 @@ export default function DashboardPage() {
         className="ml-[270px] flex-1 flex flex-col h-full relative"
         style={{ backgroundColor: '#ffffff' }}
       >
-        {/* ── Announcement Banner ── */}
-        {announcement && !announcementDismissed && (
-          <div
-            className="flex items-center gap-3 px-5 py-2.5 text-sm"
-            style={{ backgroundColor: '#003d2e', color: '#bbfbe6', borderBottom: '1px solid #005a41' }}
-          >
-            <span className="material-symbols-outlined flex-shrink-0" style={{ fontSize: '16px', color: '#00cc77' }}>campaign</span>
-            <span className="flex-1" style={{ fontFamily: 'var(--font-syne)' }}>{announcement}</span>
-            <button onClick={() => setAnnouncementDismissed(true)} style={{ color: '#6d7a73', lineHeight: 1 }}
-              className="hover:text-white transition-colors ml-2">✕</button>
-          </div>
-        )}
 
         {/* ── Answer View (scrollable) ── */}
         <div
