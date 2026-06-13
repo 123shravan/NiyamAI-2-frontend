@@ -666,6 +666,8 @@ export default function DashboardPage() {
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
   const [historyAnswer, setHistoryAnswer] = useState<HistoryItem | null>(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [announcement, setAnnouncement] = useState<string | null>(null);
+  const [announcementDismissed, setAnnouncementDismissed] = useState(false);
 
   const answerScrollRef = useRef<HTMLDivElement>(null);
 
@@ -713,6 +715,12 @@ export default function DashboardPage() {
   useEffect(() => {
     if (isAuthenticated) loadHistory();
   }, [isAuthenticated, loadHistory]);
+
+  useEffect(() => {
+    api.get('/admin/announcement/public').then(res => {
+      if (res.data?.announcement?.message) setAnnouncement(res.data.announcement.message);
+    }).catch(() => {});
+  }, []);
 
   const submitQuery = useCallback(
     (q: string) => {
@@ -964,6 +972,19 @@ export default function DashboardPage() {
         className="ml-[270px] flex-1 flex flex-col h-full relative"
         style={{ backgroundColor: '#ffffff' }}
       >
+        {/* ── Announcement Banner ── */}
+        {announcement && !announcementDismissed && (
+          <div
+            className="flex items-center gap-3 px-5 py-2.5 text-sm"
+            style={{ backgroundColor: '#003d2e', color: '#bbfbe6', borderBottom: '1px solid #005a41' }}
+          >
+            <span className="material-symbols-outlined flex-shrink-0" style={{ fontSize: '16px', color: '#00cc77' }}>campaign</span>
+            <span className="flex-1" style={{ fontFamily: 'var(--font-syne)' }}>{announcement}</span>
+            <button onClick={() => setAnnouncementDismissed(true)} style={{ color: '#6d7a73', lineHeight: 1 }}
+              className="hover:text-white transition-colors ml-2">✕</button>
+          </div>
+        )}
+
         {/* ── Answer View (scrollable) ── */}
         <div
           ref={answerScrollRef}
