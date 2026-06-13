@@ -76,9 +76,10 @@ function LoginContent() {
   // Handle Google OAuth error redirect
   useEffect(() => {
     const errorParam = searchParams.get('error');
-    if (errorParam === 'google_auth_failed') {
+    if (errorParam === 'google_auth_failed' ||
+        errorParam === 'oauth_state_invalid' ||
+        errorParam === 'oauth_state_missing') {
       setGoogleError('Could not complete sign-in with Google. Please try again.');
-      // Clean the URL without reloading
       window.history.replaceState({}, '', '/login');
     }
   }, [searchParams]);
