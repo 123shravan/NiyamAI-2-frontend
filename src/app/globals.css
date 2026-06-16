@@ -43,14 +43,14 @@ body {
   border-radius: 0.75rem;
   font-weight: 600;
   color: #ffffff;
-  background: linear-gradient(135deg, #2563eb 0%, #4338ca 100%);
-  border: 1px solid rgba(37, 99, 235, 0.6);
+  background: linear-gradient(135deg, #00694c 0%, #008560 100%);
+  border: 1px solid rgba(0, 105, 76, 0.6);
   transition: transform 0.15s ease, box-shadow 0.2s ease, opacity 0.2s ease;
 }
 
 .btn-primary:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.35);
+  box-shadow: 0 8px 24px rgba(0, 133, 96, 0.35);
 }
 
 .btn-primary:disabled {
@@ -66,8 +66,8 @@ body {
 }
 
 .input-focus:focus {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
+  border-color: #008560;
+  box-shadow: 0 0 0 3px rgba(0, 133, 96, 0.14);
 }
 
 .animate-fade-in-up {
