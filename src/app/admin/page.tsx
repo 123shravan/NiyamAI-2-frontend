@@ -276,6 +276,8 @@ export default function AdminDashboard() {
   const [correctionInput, setCorrectionInput] = useState('');
   const [correctionSaving, setCorrectionSaving] = useState(false);
   const [deletingCorrectionId, setDeletingCorrectionId] = useState<string | null>(null);
+  const [correctionsLocked, setCorrectionsLocked] = useState(true);
+  const [correctionsUnlocking, setCorrectionsUnlocking] = useState(false);
 
   // ── Loaders ───────────────────────────────────────────────
 
@@ -340,7 +342,7 @@ export default function AdminDashboard() {
     if (tab === 'analytics') loadAnalytics();
     if (tab === 'audit') loadAudit();
     if (tab === 'health') { loadHealth(); loadAnnouncement(); }
-    if (tab === 'corrections') loadCorrections();
+    if (tab === 'corrections') { loadCorrections(); setCorrectionsLocked(true); setCorrectionInput(''); }
   }, [tab]);
 
   // ── Duplicate IP detection ────────────────────────────────
@@ -411,6 +413,16 @@ export default function AdminDashboard() {
     } catch { }
   };
 
+  const handleUnlockCorrections = async () => {
+    setCorrectionsUnlocking(true);
+    try {
+      await api.post('/admin/corrections/unlock', {}, adminConfig());
+      setCorrectionsLocked(false);
+      loadAudit();
+    } catch { setCorrectionsLocked(false); }
+    finally { setCorrectionsUnlocking(false); }
+  };
+
   const handleAddCorrection = async () => {
     if (!correctionInput.trim()) return;
     setCorrectionSaving(true);
@@ -448,6 +460,7 @@ export default function AdminDashboard() {
     query_deleted: 'text-red-400', announcement_set: 'text-purple-400',
     announcement_cleared: 'text-slate-400',
     correction_added: 'text-amber-400', correction_deleted: 'text-slate-400',
+    correction_tab_unlocked: 'text-orange-400',
   };
 
   return (
@@ -874,31 +887,73 @@ export default function AdminDashboard() {
       {tab === 'corrections' && (
         <div className="space-y-6">
 
-          {/* ── Add correction ─────────────────────────────── */}
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-            <h3 className="text-sm font-semibold text-white mb-1">Tell the model it got something wrong</h3>
-            <p className="text-xs text-slate-500 mb-4 leading-relaxed">
-              Write in plain language what was wrong and what the correct answer is.
-              From this moment the model will use your correction whenever someone asks something similar.
-            </p>
-            <textarea
-              value={correctionInput}
-              onChange={e => setCorrectionInput(e.target.value)}
-              rows={5}
-              placeholder={`Example:\n"When someone asks about GST registration for e-commerce sellers, you keep saying the threshold exemption applies — that is wrong. The correct answer is: all e-commerce operators must register under GST regardless of their turnover. Section 24(ix) of the CGST Act 2017 mandates this with no exceptions."`}
-              className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white placeholder:text-slate-600 resize-none leading-relaxed mb-3"
-            />
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-slate-600">{correctionInput.length} / 5000 characters</span>
+          {/* ── Lock banner ───────────────────────────────────── */}
+          {correctionsLocked ? (
+            <div className="bg-slate-900 border border-amber-900/40 rounded-xl p-6 flex flex-col items-center text-center gap-4">
+              <div className="w-12 h-12 rounded-full bg-amber-900/30 flex items-center justify-center">
+                <svg className="w-6 h-6 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-white font-semibold text-sm mb-1">Corrections are locked</p>
+                <p className="text-slate-500 text-xs leading-relaxed max-w-sm">
+                  This section directly controls what the model says. Unlock to add or remove corrections.
+                  Every unlock and every change is recorded in the Audit Log.
+                </p>
+              </div>
               <button
-                onClick={handleAddCorrection}
-                disabled={correctionSaving || correctionInput.trim().length < 10}
-                className="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-40"
+                onClick={handleUnlockCorrections}
+                disabled={correctionsUnlocking}
+                className="px-6 py-2 bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
               >
-                {correctionSaving ? 'Saving…' : 'Save Correction'}
+                {correctionsUnlocking ? 'Unlocking…' : 'Unlock to Edit'}
               </button>
             </div>
-          </div>
+          ) : (
+            <div className="flex items-center gap-2 px-4 py-2.5 bg-amber-900/20 border border-amber-700/40 rounded-lg">
+              <svg className="w-4 h-4 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+              </svg>
+              <p className="text-amber-300 text-xs flex-1">Unlocked — all changes are being recorded in the Audit Log.</p>
+              <button
+                onClick={() => { setCorrectionsLocked(true); setCorrectionInput(''); }}
+                className="text-xs text-slate-400 hover:text-white border border-slate-700 px-3 py-1 rounded-lg transition-colors"
+              >
+                Lock
+              </button>
+            </div>
+          )}
+
+          {/* ── Add correction (only when unlocked) ───────────── */}
+          {!correctionsLocked && (
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+              <h3 className="text-sm font-semibold text-white mb-1">Tell the model it got something wrong</h3>
+              <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+                Write in plain language what was wrong and what the correct answer is.
+                From this moment the model will use your correction whenever someone asks something similar.
+              </p>
+              <textarea
+                value={correctionInput}
+                onChange={e => setCorrectionInput(e.target.value)}
+                rows={5}
+                placeholder={`Example:\n"When someone asks about GST registration for e-commerce sellers, you keep saying the threshold exemption applies — that is wrong. The correct answer is: all e-commerce operators must register under GST regardless of their turnover. Section 24(ix) of the CGST Act 2017 mandates this with no exceptions."`}
+                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white placeholder:text-slate-600 resize-none leading-relaxed mb-3"
+              />
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-600">{correctionInput.length} / 5000 characters</span>
+                <button
+                  onClick={handleAddCorrection}
+                  disabled={correctionSaving || correctionInput.trim().length < 10}
+                  className="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-40"
+                >
+                  {correctionSaving ? 'Saving…' : 'Save Correction'}
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* ── Active corrections list ─────────────────────── */}
           <div>
@@ -913,7 +968,7 @@ export default function AdminDashboard() {
             {!correctionsLoading && corrections.length === 0 && (
               <div className="bg-slate-900 border border-slate-800 rounded-xl px-5 py-10 text-center">
                 <p className="text-slate-500 text-sm">No corrections yet.</p>
-                <p className="text-slate-600 text-xs mt-1">When you save one above, it will appear here and the model will immediately start using it.</p>
+                <p className="text-slate-600 text-xs mt-1">Unlock and add one above — the model will use it immediately for similar questions.</p>
               </div>
             )}
 
@@ -922,13 +977,15 @@ export default function AdminDashboard() {
                 <div key={c.id} className="bg-slate-900 border border-slate-800 rounded-xl p-5">
                   <div className="flex items-start justify-between gap-4">
                     <p className="text-slate-200 text-sm leading-relaxed flex-1 whitespace-pre-wrap">{c.correction}</p>
-                    <button
-                      onClick={() => handleDeleteCorrection(c.id)}
-                      disabled={deletingCorrectionId === c.id}
-                      className="shrink-0 px-3 py-1.5 text-xs text-red-400 border border-red-900/40 rounded-lg hover:bg-red-900/20 transition-colors disabled:opacity-40"
-                    >
-                      {deletingCorrectionId === c.id ? '…' : 'Remove'}
-                    </button>
+                    {!correctionsLocked && (
+                      <button
+                        onClick={() => handleDeleteCorrection(c.id)}
+                        disabled={deletingCorrectionId === c.id}
+                        className="shrink-0 px-3 py-1.5 text-xs text-red-400 border border-red-900/40 rounded-lg hover:bg-red-900/20 transition-colors disabled:opacity-40"
+                      >
+                        {deletingCorrectionId === c.id ? '…' : 'Remove'}
+                      </button>
+                    )}
                   </div>
                   <p className="text-xs text-slate-600 mt-3">
                     Added by <span className="text-slate-500">{c.created_by}</span> · {fmt(c.created_at)}
