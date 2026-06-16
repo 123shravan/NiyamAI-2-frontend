@@ -77,6 +77,13 @@ interface Announcement {
   created_at: string;
 }
 
+interface Correction {
+  id: string;
+  correction: string;
+  created_by: string;
+  created_at: string;
+}
+
 // ── Helpers ────────────────────────────────────────────────────
 
 function adminConfig(extra?: Record<string, unknown>) {
@@ -228,7 +235,7 @@ function QueryModal({ query, onClose }: { query: Query; onClose: () => void }) {
 // ── Main Page ──────────────────────────────────────────────────
 
 export default function AdminDashboard() {
-  const [tab, setTab] = useState<'users' | 'analytics' | 'audit' | 'health'>('users');
+  const [tab, setTab] = useState<'users' | 'analytics' | 'audit' | 'health' | 'corrections'>('users');
 
   // Users
   const [users, setUsers] = useState<User[]>([]);
@@ -262,6 +269,13 @@ export default function AdminDashboard() {
   const [announcement, setAnnouncement] = useState<Announcement | null>(null);
   const [announcementInput, setAnnouncementInput] = useState('');
   const [announcementSaving, setAnnouncementSaving] = useState(false);
+
+  // Corrections
+  const [corrections, setCorrections] = useState<Correction[]>([]);
+  const [correctionsLoading, setCorrectionsLoading] = useState(false);
+  const [correctionInput, setCorrectionInput] = useState('');
+  const [correctionSaving, setCorrectionSaving] = useState(false);
+  const [deletingCorrectionId, setDeletingCorrectionId] = useState<string | null>(null);
 
   // ── Loaders ───────────────────────────────────────────────
 
@@ -313,11 +327,20 @@ export default function AdminDashboard() {
     } catch { }
   }, []);
 
+  const loadCorrections = useCallback(async () => {
+    setCorrectionsLoading(true);
+    try {
+      const res = await api.get('/admin/corrections', adminConfig());
+      setCorrections(res.data.corrections);
+    } catch { } finally { setCorrectionsLoading(false); }
+  }, []);
+
   useEffect(() => {
     if (tab === 'users') loadUsers();
     if (tab === 'analytics') loadAnalytics();
     if (tab === 'audit') loadAudit();
     if (tab === 'health') { loadHealth(); loadAnnouncement(); }
+    if (tab === 'corrections') loadCorrections();
   }, [tab]);
 
   // ── Duplicate IP detection ────────────────────────────────
@@ -388,6 +411,27 @@ export default function AdminDashboard() {
     } catch { }
   };
 
+  const handleAddCorrection = async () => {
+    if (!correctionInput.trim()) return;
+    setCorrectionSaving(true);
+    try {
+      await api.post('/admin/corrections', { correction: correctionInput.trim() }, adminConfig());
+      setCorrectionInput('');
+      await loadCorrections();
+    } catch (e: any) { alert(e.response?.data?.detail || 'Could not save correction.'); }
+    finally { setCorrectionSaving(false); }
+  };
+
+  const handleDeleteCorrection = async (id: string) => {
+    if (!confirm('Remove this correction? The model will stop using it immediately.')) return;
+    setDeletingCorrectionId(id);
+    try {
+      await api.delete(`/admin/corrections/${id}`, adminConfig());
+      setCorrections(prev => prev.filter(c => c.id !== id));
+    } catch (e: any) { alert(e.response?.data?.detail || 'Delete failed.'); }
+    finally { setDeletingCorrectionId(null); }
+  };
+
   // ── Tab button ─────────────────────────────────────────────
   const TabBtn = ({ id, label, icon }: { id: typeof tab; label: string; icon: React.ReactNode }) => (
     <button onClick={() => setTab(id)}
@@ -403,6 +447,7 @@ export default function AdminDashboard() {
     user_suspended: 'text-amber-400', user_unsuspended: 'text-emerald-400',
     query_deleted: 'text-red-400', announcement_set: 'text-purple-400',
     announcement_cleared: 'text-slate-400',
+    correction_added: 'text-amber-400', correction_deleted: 'text-slate-400',
   };
 
   return (
@@ -431,10 +476,15 @@ export default function AdminDashboard() {
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
           </svg>} />
+        <TabBtn id="corrections" label={`Corrections${corrections.length ? ` (${corrections.length})` : ''}`} icon={
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+          </svg>} />
         <div className="ml-auto flex gap-2">
           {tab === 'health' && <button onClick={loadHealth} className="text-xs text-slate-400 hover:text-white border border-slate-700 px-3 py-1.5 rounded-lg transition-colors">Refresh</button>}
           {tab === 'audit' && <button onClick={loadAudit} className="text-xs text-slate-400 hover:text-white border border-slate-700 px-3 py-1.5 rounded-lg transition-colors">Refresh</button>}
           {tab === 'analytics' && <button onClick={loadAnalytics} className="text-xs text-slate-400 hover:text-white border border-slate-700 px-3 py-1.5 rounded-lg transition-colors">Refresh</button>}
+          {tab === 'corrections' && <button onClick={loadCorrections} className="text-xs text-slate-400 hover:text-white border border-slate-700 px-3 py-1.5 rounded-lg transition-colors">Refresh</button>}
         </div>
       </div>
 
@@ -815,6 +865,76 @@ export default function AdminDashboard() {
                   Clear
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── CORRECTIONS TAB ───────────────────────────────── */}
+      {tab === 'corrections' && (
+        <div className="space-y-6">
+
+          {/* ── Add correction ─────────────────────────────── */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+            <h3 className="text-sm font-semibold text-white mb-1">Tell the model it got something wrong</h3>
+            <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+              Write in plain language what was wrong and what the correct answer is.
+              From this moment the model will use your correction whenever someone asks something similar.
+            </p>
+            <textarea
+              value={correctionInput}
+              onChange={e => setCorrectionInput(e.target.value)}
+              rows={5}
+              placeholder={`Example:\n"When someone asks about GST registration for e-commerce sellers, you keep saying the threshold exemption applies — that is wrong. The correct answer is: all e-commerce operators must register under GST regardless of their turnover. Section 24(ix) of the CGST Act 2017 mandates this with no exceptions."`}
+              className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white placeholder:text-slate-600 resize-none leading-relaxed mb-3"
+            />
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-slate-600">{correctionInput.length} / 5000 characters</span>
+              <button
+                onClick={handleAddCorrection}
+                disabled={correctionSaving || correctionInput.trim().length < 10}
+                className="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-40"
+              >
+                {correctionSaving ? 'Saving…' : 'Save Correction'}
+              </button>
+            </div>
+          </div>
+
+          {/* ── Active corrections list ─────────────────────── */}
+          <div>
+            <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-3">
+              Active Corrections ({corrections.length})
+            </h3>
+
+            {correctionsLoading && corrections.length === 0 && (
+              <p className="text-slate-500 text-sm py-6 text-center">Loading…</p>
+            )}
+
+            {!correctionsLoading && corrections.length === 0 && (
+              <div className="bg-slate-900 border border-slate-800 rounded-xl px-5 py-10 text-center">
+                <p className="text-slate-500 text-sm">No corrections yet.</p>
+                <p className="text-slate-600 text-xs mt-1">When you save one above, it will appear here and the model will immediately start using it.</p>
+              </div>
+            )}
+
+            <div className="space-y-3">
+              {corrections.map((c) => (
+                <div key={c.id} className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <p className="text-slate-200 text-sm leading-relaxed flex-1 whitespace-pre-wrap">{c.correction}</p>
+                    <button
+                      onClick={() => handleDeleteCorrection(c.id)}
+                      disabled={deletingCorrectionId === c.id}
+                      className="shrink-0 px-3 py-1.5 text-xs text-red-400 border border-red-900/40 rounded-lg hover:bg-red-900/20 transition-colors disabled:opacity-40"
+                    >
+                      {deletingCorrectionId === c.id ? '…' : 'Remove'}
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-3">
+                    Added by <span className="text-slate-500">{c.created_by}</span> · {fmt(c.created_at)}
+                  </p>
+                </div>
+              ))}
             </div>
           </div>
         </div>
