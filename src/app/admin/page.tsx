@@ -278,6 +278,8 @@ export default function AdminDashboard() {
   const [deletingCorrectionId, setDeletingCorrectionId] = useState<string | null>(null);
   const [correctionsLocked, setCorrectionsLocked] = useState(true);
   const [correctionsUnlocking, setCorrectionsUnlocking] = useState(false);
+  const [correctionsPassword, setCorrectionsPassword] = useState('');
+  const [correctionsPasswordError, setCorrectionsPasswordError] = useState('');
 
   // ── Loaders ───────────────────────────────────────────────
 
@@ -342,7 +344,7 @@ export default function AdminDashboard() {
     if (tab === 'analytics') loadAnalytics();
     if (tab === 'audit') loadAudit();
     if (tab === 'health') { loadHealth(); loadAnnouncement(); }
-    if (tab === 'corrections') { loadCorrections(); setCorrectionsLocked(true); setCorrectionInput(''); }
+    if (tab === 'corrections') { loadCorrections(); setCorrectionsLocked(true); setCorrectionInput(''); setCorrectionsPassword(''); setCorrectionsPasswordError(''); }
   }, [tab]);
 
   // ── Duplicate IP detection ────────────────────────────────
@@ -414,13 +416,17 @@ export default function AdminDashboard() {
   };
 
   const handleUnlockCorrections = async () => {
+    if (!correctionsPassword.trim()) { setCorrectionsPasswordError('Enter your password.'); return; }
     setCorrectionsUnlocking(true);
+    setCorrectionsPasswordError('');
     try {
-      await api.post('/admin/corrections/unlock', {}, adminConfig());
+      await api.post('/admin/corrections/unlock', { password: correctionsPassword }, adminConfig());
       setCorrectionsLocked(false);
+      setCorrectionsPassword('');
       loadAudit();
-    } catch { setCorrectionsLocked(false); }
-    finally { setCorrectionsUnlocking(false); }
+    } catch (e: any) {
+      setCorrectionsPasswordError(e.response?.data?.detail || 'Incorrect password.');
+    } finally { setCorrectionsUnlocking(false); }
   };
 
   const handleAddCorrection = async () => {
@@ -899,17 +905,30 @@ export default function AdminDashboard() {
               <div>
                 <p className="text-white font-semibold text-sm mb-1">Corrections are locked</p>
                 <p className="text-slate-500 text-xs leading-relaxed max-w-sm">
-                  This section directly controls what the model says. Unlock to add or remove corrections.
+                  This section directly controls what the model says. Enter your admin password to unlock.
                   Every unlock and every change is recorded in the Audit Log.
                 </p>
               </div>
-              <button
-                onClick={handleUnlockCorrections}
-                disabled={correctionsUnlocking}
-                className="px-6 py-2 bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
-              >
-                {correctionsUnlocking ? 'Unlocking…' : 'Unlock to Edit'}
-              </button>
+              <div className="w-full max-w-xs flex flex-col gap-2">
+                <input
+                  type="password"
+                  value={correctionsPassword}
+                  onChange={e => { setCorrectionsPassword(e.target.value); setCorrectionsPasswordError(''); }}
+                  onKeyDown={e => e.key === 'Enter' && handleUnlockCorrections()}
+                  placeholder="Enter your admin password"
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-sm text-white placeholder:text-slate-500 text-center"
+                />
+                {correctionsPasswordError && (
+                  <p className="text-red-400 text-xs">{correctionsPasswordError}</p>
+                )}
+                <button
+                  onClick={handleUnlockCorrections}
+                  disabled={correctionsUnlocking || !correctionsPassword.trim()}
+                  className="w-full py-2.5 bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {correctionsUnlocking ? 'Verifying…' : 'Unlock'}
+                </button>
+              </div>
             </div>
           ) : (
             <div className="flex items-center gap-2 px-4 py-2.5 bg-amber-900/20 border border-amber-700/40 rounded-lg">
