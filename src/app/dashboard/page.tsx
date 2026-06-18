@@ -265,20 +265,37 @@ const STEP_LABELS = [
   'Structuring answer',
 ];
 
-function LoadingStateView({ query, onComplete }: { query: string; onComplete: () => void }) {
-  const [stepStatuses, setStepStatuses] = useState<StepStatus[]>([
+function LoadingStateView({
+  query,
+  onComplete,
+  hasAnswer,
+}: {
+  query: string;
+  onComplete: () => void;
+  hasAnswer: boolean;
+}) {
+  const [baseStatuses, setBaseStatuses] = useState<StepStatus[]>([
     'active', 'pending', 'pending', 'pending',
   ]);
+  const [slowWarning, setSlowWarning] = useState(false);
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
 
+  // Step 4 stays 'active' (pulsing) until the answer actually arrives —
+  // prevents the false "all done" look while the backend is still generating.
+  const stepStatuses: StepStatus[] = baseStatuses.map((s, i) => {
+    if (i === 3 && s === 'done' && !hasAnswer) return 'active';
+    return s;
+  });
+
   useEffect(() => {
     const timers: ReturnType<typeof setTimeout>[] = [];
-    timers.push(setTimeout(() => setStepStatuses(['done', 'active', 'pending', 'pending']), 1200));
-    timers.push(setTimeout(() => setStepStatuses(['done', 'done', 'active', 'pending']), 2400));
-    timers.push(setTimeout(() => setStepStatuses(['done', 'done', 'done', 'active']), 3600));
-    timers.push(setTimeout(() => setStepStatuses(['done', 'done', 'done', 'done']), 4800));
+    timers.push(setTimeout(() => setBaseStatuses(['done', 'active', 'pending', 'pending']), 1200));
+    timers.push(setTimeout(() => setBaseStatuses(['done', 'done', 'active', 'pending']), 2400));
+    timers.push(setTimeout(() => setBaseStatuses(['done', 'done', 'done', 'active']), 3600));
+    timers.push(setTimeout(() => setBaseStatuses(['done', 'done', 'done', 'done']), 4800));
     timers.push(setTimeout(() => onCompleteRef.current(), 5600));
+    timers.push(setTimeout(() => setSlowWarning(true), 12000));
     return () => timers.forEach(clearTimeout);
   }, []);
 
@@ -295,6 +312,14 @@ function LoadingStateView({ query, onComplete }: { query: string; onComplete: ()
           {query}
         </h2>
         <div className="w-full flex flex-col gap-6">
+          {slowWarning && !hasAnswer && (
+            <p
+              className="text-center text-sm"
+              style={{ fontFamily: 'var(--font-dm-mono)', color: '#6d7a73' }}
+            >
+              This is a complex query — still searching…
+            </p>
+          )}
           {STEP_LABELS.map((label, i) => {
             const status = stepStatuses[i];
             return (
@@ -1222,6 +1247,7 @@ export default function DashboardPage() {
           <LoadingStateView
             query={submittedQuery}
             onComplete={() => setAnimationComplete(true)}
+            hasAnswer={!!tokens || !!error}
           />
         )}
 
