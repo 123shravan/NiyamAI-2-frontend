@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useCallback, useRef } from 'react';
-import { useAuth } from './authContext';
-import api from './api';
+import { refreshAccessToken } from './refreshToken';
 
 export interface SSEEvent {
   type: 'start' | 'token' | 'citation' | 'verification_warning' | 'complete' | 'error';
@@ -40,47 +39,24 @@ const initialState: StreamState = {
   totalTokens: null,
 };
 
-/**
- * Custom React hook for handling SSE query streams.
- * Gets access token from auth context
- */
 export function useSSEStream() {
-  const { accessToken } = useAuth();
   const [state, setState] = useState<StreamState>(initialState);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Event handler logic - moved outside startStream to avoid closure issues
   const processEvent = useCallback((type: string, data: any) => {
     switch (type) {
       case 'start':
-        setState(prev => ({
-          ...prev,
-          queryId: data.query_id,
-          cached: data.cached || false,
-        }));
+        setState(prev => ({ ...prev, queryId: data.query_id, cached: data.cached || false }));
         break;
-
       case 'token':
-        setState(prev => ({
-          ...prev,
-          tokens: prev.tokens + (data.text || ''),
-        }));
+        setState(prev => ({ ...prev, tokens: prev.tokens + (data.text || '') }));
         break;
-
       case 'citation':
-        setState(prev => ({
-          ...prev,
-          citations: [...prev.citations, data as Citation],
-        }));
+        setState(prev => ({ ...prev, citations: [...prev.citations, data as Citation] }));
         break;
-
       case 'verification_warning':
-        setState(prev => ({
-          ...prev,
-          warnings: [...prev.warnings, data.message],
-        }));
+        setState(prev => ({ ...prev, warnings: [...prev.warnings, data.message] }));
         break;
-
       case 'complete':
         setState(prev => ({
           ...prev,
@@ -90,7 +66,6 @@ export function useSSEStream() {
           cached: data.cached || false,
         }));
         break;
-
       case 'error':
         setState(prev => ({
           ...prev,
@@ -101,85 +76,50 @@ export function useSSEStream() {
     }
   }, []);
 
-  const startStream = useCallback(async (query: string) => {
-    // Reset state
-    setState({ ...initialState, isStreaming: true });
+  const startStream = useCallback(async (query: string, _isRetry = false): Promise<void> => {
+    if (!_isRetry) {
+      setState({ ...initialState, isStreaming: true });
+    }
 
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
 
     try {
-      // Build headers - DO NOT include Authorization header
-      // We rely on httpOnly cookies which are automatically sent with credentials:'include'
-      // This avoids token staleness issues in the React context
-      const headers: HeadersInit = {
-        'Content-Type': 'application/json',
-      };
-
-      console.log('[useSSEStream] Query:', query);
-      console.log('[useSSEStream] Using cookie-based auth (credentials: include)');
-
-      const fetchUrl = `${apiUrl}/query/stream`;
-      console.log('[useSSEStream] Fetching from:', fetchUrl);
-      
-      const response = await fetch(fetchUrl, {
+      const response = await fetch(`${apiUrl}/query/stream`, {
         method: 'POST',
-        headers,
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query }),
-        credentials: 'include', // Send httpOnly cookies - handles auth transparently
+        // SSE uses cookies exclusively — no Authorization header needed here.
+        // The access_token cookie is always current because /auth/token/refresh
+        // sets it as an httpOnly cookie that the browser sends automatically.
+        credentials: 'include',
         signal: abortController.signal,
       });
-      
-      console.log('[useSSEStream] Fetch succeeded, response status:', response.status);
 
       if (!response.ok) {
+        if (response.status === 401 && !_isRetry) {
+          // Use the shared singleton so this refresh doesn't race with the axios
+          // interceptor or the proactive refresh timer in authContext.
+          await refreshAccessToken();
+          return startStream(query, true);
+        }
+
         const errorText = await response.text().catch(() => '');
-        let errorData: any = {};
-        
-        console.error('[useSSEStream] Response not OK:', {
-          status: response.status,
-          statusText: response.statusText,
-          errorText: errorText.substring(0, 200),
-        });
-        
-        try {
-          errorData = JSON.parse(errorText);
-        } catch {
-          // Response might be error text, not JSON
-        }
-
-        // Handle 401 - refresh and retry once
-        if (response.status === 401) {
-          try {
-            console.log('[useSSEStream] Received 401, attempting to refresh token...');
-            const refreshRes = await api.post('/auth/token/refresh');
-            console.log('[useSSEStream] Token refreshed successfully, retrying stream...');
-            // Retry the stream with the new cookie-based auth
-            return startStream(query);
-          } catch (refreshErr) {
-            console.error('[useSSEStream] Token refresh failed:', refreshErr);
-            throw new Error('Session expired. Please log in again.');
-          }
-        }
-
-        throw new Error(errorData.detail || `HTTP ${response.status}: ${errorText || 'Failed to stream query'}`);
+        let detail = `HTTP ${response.status}`;
+        try { detail = JSON.parse(errorText).detail || detail; } catch {}
+        throw new Error(detail);
       }
 
       const reader = response.body?.getReader();
       if (!reader) throw new Error('Stream not available');
-
-      console.log('[useSSEStream] Stream response received, reading events...');
 
       const decoder = new TextDecoder();
       let buffer = '';
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) {
-          console.log('[useSSEStream] Stream reading completed');
-          break;
-        }
+        if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
@@ -194,12 +134,7 @@ export function useSSEStream() {
           } else if (line.startsWith('data: ')) {
             eventData = line.slice(6).trim();
             if (eventType && eventData) {
-              try {
-                const parsed = JSON.parse(eventData);
-                processEvent(eventType, parsed);
-              } catch (e) {
-                // Ignore parse errors
-              }
+              try { processEvent(eventType, JSON.parse(eventData)); } catch {}
               eventType = '';
               eventData = '';
             }
@@ -209,22 +144,14 @@ export function useSSEStream() {
 
       setState(prev => ({ ...prev, isStreaming: false }));
     } catch (error: any) {
-      if (error.name === 'AbortError') {
-        console.log('[useSSEStream] Stream aborted by user');
-        return;
-      }
-      console.error('[useSSEStream] Error during streaming:', {
-        message: error.message,
-        name: error.name,
-        stack: error.stack?.substring(0, 200),
-      });
+      if (error.name === 'AbortError') return;
       setState(prev => ({
         ...prev,
         isStreaming: false,
         error: error.message || 'Something went wrong. Please try again.',
       }));
     }
-  }, [processEvent, accessToken]);
+  }, [processEvent]);
 
   const stopStream = useCallback(() => {
     abortControllerRef.current?.abort();
@@ -236,10 +163,5 @@ export function useSSEStream() {
     setState(initialState);
   }, []);
 
-  return {
-    ...state,
-    startStream,
-    stopStream,
-    resetStream,
-  };
+  return { ...state, startStream, stopStream, resetStream };
 }

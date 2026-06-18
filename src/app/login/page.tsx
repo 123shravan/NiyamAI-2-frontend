@@ -35,10 +35,16 @@ function LoginContent() {
 
     const check = async () => {
       attempts++;
-      if (attempts === 2) setWarmup('warming');
+      // Only show the "Server starting..." banner after 5 consecutive failures (~10s).
+      // A healthy-but-busy server occasionally returns slowly — we don't want to
+      // falsely block the login button for returning users on every page load.
+      if (attempts === 5) setWarmup('warming');
 
       try {
-        const res = await fetch(`${backendUrl}/health/auth-ready`, {
+        // Use /health/ping — it's instant (no Redis/DB calls) so it never
+        // returns a false 503 due to backend load. /health/auth-ready makes
+        // live network calls on every poll and can appear "not ready" under load.
+        const res = await fetch(`${backendUrl}/health/ping`, {
           method: 'GET',
           cache: 'no-store',
           signal: AbortSignal.timeout(4000),
@@ -48,7 +54,7 @@ function LoginContent() {
           return;
         }
       } catch {
-        // Backend not yet ready — keep polling
+        // Backend not yet reachable — keep polling
       }
 
       if (attempts < 45) {

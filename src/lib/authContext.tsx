@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import api from './api';
+import { refreshAccessToken } from './refreshToken';
 
 // L3 — User type includes is_admin flag read from JWT payload
 // This is used ONLY for UX (showing/hiding admin UI).
@@ -63,33 +64,76 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [accessToken]);
 
+  // Proactive token refresh — rotate the access token 3 minutes before its 15-minute
+  // expiry so it never goes stale during an active session.  Using setTimeout (not
+  // setInterval) means each successful refresh reschedules itself via the accessToken
+  // dependency, creating a self-renewing chain that stays alive as long as the user
+  // is logged in.  This eliminates the most common cause of unexpected mid-session
+  // logouts: the 401 interceptor firing when the token quietly expires between requests.
+  useEffect(() => {
+    if (!accessToken) return;
+
+    const PROACTIVE_REFRESH_MS = 12 * 60 * 1000; // refresh at minute 12 of a 15-min token
+    const timer = setTimeout(async () => {
+      try {
+        const newToken = await refreshAccessToken();
+        if (newToken) {
+          setAccessToken(newToken);
+          api.defaults.headers.common['Authorization'] = `Bearer ${newToken}`;
+        }
+      } catch {
+        // Proactive refresh failed (network blip, server restart, etc.).
+        // Do NOT log the user out here — their cookies may still be valid.
+        // The 401 interceptor in api.ts is the fallback for the next API call.
+      }
+    }, PROACTIVE_REFRESH_MS);
+
+    return () => clearTimeout(timer);
+  }, [accessToken]);
+
   const checkSession = async () => {
-    // Abort the session check after 4s so cold-start backends don't freeze the UI.
-    // If backend responds later (backend warms up), the AbortError lands in catch
-    // and we just clear user state — the user can log in normally once the backend is ready.
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
-    try {
-      const res = await api.post('/auth/token/refresh', {}, { signal: controller.signal });
-      clearTimeout(timeoutId);
-      if (res.data?.access_token) {
-        setAccessToken(res.data.access_token);
-        api.defaults.headers.common['Authorization'] = `Bearer ${res.data.access_token}`;
+    // Do NOT abort the refresh request on timeout — aborting destroys the Set-Cookie
+    // header in the response. If the server rotates the refresh token (deletes the old
+    // one from Redis) but the client aborts before receiving the new cookie, the user
+    // is permanently locked out with no valid refresh token in their browser.
+    //
+    // Instead: let the fetch run to completion but show the login UI after 10s so we
+    // don't freeze a cold-start. If the response eventually arrives it still sets the
+    // cookie and updates state via the `then` chain below.
+    let settled = false;
+    const refreshPromise = refreshAccessToken().then(async (newToken) => {
+      if (newToken) {
+        setAccessToken(newToken);
+        api.defaults.headers.common['Authorization'] = `Bearer ${newToken}`;
         try {
           const meRes = await api.get('/auth/me');
           setUser(meRes.data);
-        } catch (meErr) {
-          console.error("Failed to fetch full profile", meErr);
+        } catch {
+          // Profile fetch failed but token is valid — non-fatal
         }
       }
-    } catch {
-      // No valid session, or backend is cold-starting (abort) — show UI immediately
+    }).catch(() => {
+      // No valid session (401) or network error — clear state
       setUser(null);
       setAccessToken(null);
-    } finally {
-      clearTimeout(timeoutId);
+    }).finally(() => {
+      settled = true;
       setIsLoading(false);
-    }
+    });
+
+    // After 10s, unblock the UI even if the backend is still responding.
+    // The refreshPromise continues in the background and will still set cookies/state.
+    await Promise.race([
+      refreshPromise,
+      new Promise<void>(resolve => setTimeout(() => {
+        if (!settled) {
+          setUser(null);
+          setAccessToken(null);
+          setIsLoading(false);
+        }
+        resolve();
+      }, 10000)),
+    ]);
   };
 
   const sendOTP = useCallback(async (email: string) => {
