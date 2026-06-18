@@ -43,9 +43,22 @@ interface ParsedAnswer {
   citationCount: number;
 }
 
+function formatCiteId(nodeId: string): string {
+  const id = nodeId.replace(/_P$/, '');
+  const parts = id.split('_');
+  const corpus = parts[0];
+  const year = parts[1] || '';
+  const ruleIdx = parts.findIndex((p, i) => i >= 2 && /^R\d/.test(p));
+  if (ruleIdx === -1) return id.replace(/_/g, ' ');
+  const ruleNum = parts[ruleIdx].slice(1);
+  const clauseParts = parts.slice(ruleIdx + 1);
+  const clause = clauseParts.length > 0 ? `(${clauseParts.join(')(')})` : '';
+  return `${corpus} ${year} — Rule ${ruleNum}${clause}`.trim();
+}
+
 function parseAnswer(answer: string): ParsedAnswer {
-  // Primary: split on --- separators (correct model output)
-  let parts = answer.split(/\n---\n/);
+  // Primary: split on --- separators (allow 1-3 newlines around the dashes)
+  let parts = answer.split(/\n{1,3}---\n{1,3}/);
 
   // Fallback: model omitted --- but used ### headings (wrong format, but recoverable)
   if (parts.length === 1) {
@@ -97,7 +110,9 @@ function parseAnswer(answer: string): ParsedAnswer {
       .trim();
   }
 
-  const citationCount = (citationsText.match(/\*\*📜/g) || []).length;
+  const citationCount =
+    (citationsText.match(/\[CITE:[A-Za-z0-9_]+\]/g) ||
+     citationsText.match(/\*\*📜/g) || []).length;
 
   return { stateTag, summary, legalBasis, citationsText, gaps, citationCount };
 }
@@ -110,25 +125,28 @@ interface CitationBlock {
 
 function parseCitationBlocks(citationsText: string): CitationBlock[] {
   const blocks: CitationBlock[] = [];
-  // Split on blank lines before a citation block
-  const rawBlocks = citationsText.split(/\n{2,}(?=\*\*📜)/);
 
+  // New format: [CITE:NODE_ID]\n<verbatim>\ntext\n</verbatim>
+  const newFmt = /\[CITE:([A-Za-z0-9_]+)\]\s*\n<verbatim>([\s\S]*?)<\/verbatim>/g;
+  let m: RegExpExecArray | null;
+  while ((m = newFmt.exec(citationsText)) !== null) {
+    blocks.push({ title: formatCiteId(m[1]), quote: m[2].trim(), effectiveDate: '' });
+  }
+  if (blocks.length > 0) return blocks;
+
+  // Legacy format: **📜 Title**\n> quote\n*(Effective: date)*
+  const rawBlocks = citationsText.split(/\n{2,}(?=\*\*📜)/);
   for (const block of rawBlocks) {
     if (!block.trim() || !block.includes('📜')) continue;
-
     const titleMatch = block.match(/\*\*📜\s+(.+?)\*\*/);
     const title = titleMatch ? titleMatch[1].trim() : '';
     if (!title) continue;
-
     const quoteLines = block.match(/^>\s+.+$/gm) || [];
     const quote = quoteLines.map(l => l.replace(/^>\s+/, '')).join(' ');
-
     const dateMatch = block.match(/\*\(Effective:\s+(.+?)\)\*/);
     const effectiveDate = dateMatch ? dateMatch[1].trim() : '';
-
     blocks.push({ title, quote, effectiveDate });
   }
-
   return blocks;
 }
 
