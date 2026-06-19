@@ -62,4 +62,26 @@ api.interceptors.response.use(
   }
 );
 
+export interface ChatSummary {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatTurn {
+  id: string;
+  query_text: string;
+  answer: string;
+  cited_node_ids: string[];
+  created_at: string;
+}
+
+export const chatApi = {
+  list: () => api.get<{ chats: ChatSummary[] }>('/chats'),
+  rename: (id: string, title: string) => api.patch(`/chats/${id}`, { title }),
+  remove: (id: string) => api.delete(`/chats/${id}`),
+  messages: (id: string) => api.get<{ chat: ChatSummary; messages: ChatTurn[] }>(`/chats/${id}/messages`),
+};
+
 export default api;

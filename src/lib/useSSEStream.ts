@@ -22,6 +22,7 @@ export interface StreamState {
   warnings: string[];
   error: string | null;
   queryId: string | null;
+  chatId: string | null;
   cached: boolean;
   latencyMs: number | null;
   totalTokens: number | null;
@@ -34,6 +35,7 @@ const initialState: StreamState = {
   warnings: [],
   error: null,
   queryId: null,
+  chatId: null,
   cached: false,
   latencyMs: null,
   totalTokens: null,
@@ -46,7 +48,12 @@ export function useSSEStream() {
   const processEvent = useCallback((type: string, data: any) => {
     switch (type) {
       case 'start':
-        setState(prev => ({ ...prev, queryId: data.query_id, cached: data.cached || false }));
+        setState(prev => ({
+          ...prev,
+          queryId: data.query_id,
+          chatId: data.chat_id ?? prev.chatId,
+          cached: data.cached || false,
+        }));
         break;
       case 'token':
         setState(prev => ({ ...prev, tokens: prev.tokens + (data.text || '') }));
@@ -76,9 +83,13 @@ export function useSSEStream() {
     }
   }, []);
 
-  const startStream = useCallback(async (query: string, _isRetry = false): Promise<void> => {
+  const startStream = useCallback(async (
+    query: string,
+    chatId: string | null = null,
+    _isRetry = false,
+  ): Promise<void> => {
     if (!_isRetry) {
-      setState({ ...initialState, isStreaming: true });
+      setState({ ...initialState, isStreaming: true, chatId });
     }
 
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -89,7 +100,7 @@ export function useSSEStream() {
       const response = await fetch(`${apiUrl}/query/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query }),
+        body: JSON.stringify({ query, chat_id: chatId }),
         // SSE uses cookies exclusively — no Authorization header needed here.
         // The access_token cookie is always current because /auth/token/refresh
         // sets it as an httpOnly cookie that the browser sends automatically.
@@ -102,7 +113,7 @@ export function useSSEStream() {
           // Use the shared singleton so this refresh doesn't race with the axios
           // interceptor or the proactive refresh timer in authContext.
           await refreshAccessToken();
-          return startStream(query, true);
+          return startStream(query, chatId, true);
         }
 
         const errorText = await response.text().catch(() => '');

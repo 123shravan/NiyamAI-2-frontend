@@ -4,31 +4,11 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from '@/lib/authContext';
 import { useRouter } from 'next/navigation';
 import { useSSEStream } from '@/lib/useSSEStream';
-import api from '@/lib/api';
+import api, { chatApi, ChatSummary, ChatTurn } from '@/lib/api';
 import ProfileCompletionModal from '@/components/ProfileCompletionModal';
 import ProfileDrawer from '@/components/ProfileDrawer';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-interface HistorySummary {
-  id: string;
-  query_text: string;
-  answer_preview: string;
-  created_at: string;
-  cache_hit: boolean;
-  latency_total_ms: number | null;
-}
-
-interface HistoryItem {
-  id: string;
-  query_text: string;
-  answer: string;
-  cited_node_ids: string[];
-  cache_hit: boolean;
-  verification_passed: boolean;
-  latency_total_ms: number | null;
-  created_at: string;
-}
 
 type ViewState = 'empty' | 'loading' | 'answer';
 
@@ -406,7 +386,7 @@ function AnswerSectionsView({
   answer: string;
   query: string;
   warnings: string[];
-  onNewQuery: () => void;
+  onNewQuery?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const parsed = parseAnswer(answer);
@@ -662,20 +642,22 @@ function AnswerSectionsView({
               </div>
             )}
           </div>
-          <button
-            onClick={onNewQuery}
-            className="flex items-center gap-2 px-6 py-4 rounded-xl ml-auto"
-            style={{
-              backgroundColor: '#008560',
-              color: '#f5fff7',
-              fontFamily: 'var(--font-syne)',
-              fontSize: '14px',
-              fontWeight: 700,
-            }}
-          >
-            <span className="material-symbols-outlined text-lg">add</span>
-            New Query
-          </button>
+          {onNewQuery && (
+            <button
+              onClick={onNewQuery}
+              className="flex items-center gap-2 px-6 py-4 rounded-xl ml-auto"
+              style={{
+                backgroundColor: '#008560',
+                color: '#f5fff7',
+                fontFamily: 'var(--font-syne)',
+                fontSize: '14px',
+                fontWeight: 700,
+              }}
+            >
+              <span className="material-symbols-outlined text-lg">add</span>
+              New Query
+            </button>
+          )}
         </div>
       </section>
     </div>
@@ -697,7 +679,7 @@ export default function DashboardPage() {
   const { user, isAuthenticated, isLoading, isAdmin, logout } = useAuth();
   const router = useRouter();
   const {
-    isStreaming, tokens, warnings, error,
+    isStreaming, tokens, warnings, error, citations, chatId: sseChatId,
     startStream, resetStream,
   } = useSSEStream();
 
@@ -705,9 +687,12 @@ export default function DashboardPage() {
   const [inputValue, setInputValue] = useState('');
   const [submittedQuery, setSubmittedQuery] = useState('');
   const [animationComplete, setAnimationComplete] = useState(false);
-  const [queryHistory, setQueryHistory] = useState<HistorySummary[]>([]);
-  const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
-  const [historyAnswer, setHistoryAnswer] = useState<HistoryItem | null>(null);
+  const [chats, setChats] = useState<ChatSummary[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatTurn[]>([]);
+  const [loadingChatId, setLoadingChatId] = useState<string | null>(null);
+  const [editingChatId, setEditingChatId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [announcement, setAnnouncement] = useState<string | null>(null);
   const [announcementDismissed, setAnnouncementDismissed] = useState(false);
@@ -716,6 +701,7 @@ export default function DashboardPage() {
   const [unreadCount, setUnreadCount] = useState(0);
 
   const answerScrollRef = useRef<HTMLDivElement>(null);
+  const wasStreamingRef = useRef(false);
 
   // Redirect unauthenticated users
   useEffect(() => {
@@ -723,6 +709,8 @@ export default function DashboardPage() {
   }, [isAuthenticated, isLoading, router]);
 
   // Transition from loading → answer when BOTH animation and streaming are done
+  // (only relevant for the first message of a brand-new chat, which uses the
+  // full-screen LoadingStateView overlay)
   useEffect(() => {
     if (currentView !== 'loading') return;
     if (animationComplete && !isStreaming && (tokens || error)) {
@@ -738,19 +726,50 @@ export default function DashboardPage() {
     }
   }, [error, currentView]);
 
-  const loadHistory = useCallback(async () => {
+  const loadChats = useCallback(async () => {
     if (!isAuthenticated) return;
     try {
-      const res = await api.get('/query/history', { params: { page: 1, limit: 50 } });
-      setQueryHistory(res.data?.queries ?? []);
+      const res = await chatApi.list();
+      setChats(res.data?.chats ?? []);
     } catch {
       // silent – sidebar history is non-critical
     }
   }, [isAuthenticated]);
 
   useEffect(() => {
-    if (isAuthenticated) loadHistory();
-  }, [isAuthenticated, loadHistory]);
+    if (isAuthenticated) loadChats();
+  }, [isAuthenticated, loadChats]);
+
+  // Adopt the chat_id the backend reports (covers lazy-creation on a brand-new chat).
+  useEffect(() => {
+    if (sseChatId && sseChatId !== activeChatId) {
+      setActiveChatId(sseChatId);
+    }
+  }, [sseChatId, activeChatId]);
+
+  // Once a stream finishes successfully, commit it into the visible thread and
+  // clear the transient token buffer so it isn't rendered twice.
+  useEffect(() => {
+    if (wasStreamingRef.current && !isStreaming && !error && tokens) {
+      setMessages(prev => [...prev, {
+        id: crypto.randomUUID(),
+        query_text: submittedQuery,
+        answer: tokens,
+        cited_node_ids: citations.map(c => c.id),
+        created_at: new Date().toISOString(),
+      }]);
+      resetStream();
+      loadChats();
+    }
+    wasStreamingRef.current = isStreaming;
+  }, [isStreaming, error, tokens, submittedQuery, citations, resetStream, loadChats]);
+
+  // Auto-scroll to the newest turn
+  useEffect(() => {
+    if (currentView === 'answer' && answerScrollRef.current) {
+      answerScrollRef.current.scrollTop = answerScrollRef.current.scrollHeight;
+    }
+  }, [messages.length, tokens, currentView]);
 
   useEffect(() => {
     api.get('/admin/announcement/public').then(res => {
@@ -774,14 +793,19 @@ export default function DashboardPage() {
     (q: string) => {
       if (!q.trim() || isStreaming) return;
       setSubmittedQuery(q);
-      setHistoryAnswer(null);
-      setAnimationComplete(false);
-      setCurrentView('loading');
       setInputValue('');
       resetStream();
-      startStream(q).then(() => loadHistory());
+      if (messages.length === 0) {
+        // First message of a (possibly brand-new) chat — show the full animation.
+        setAnimationComplete(false);
+        setCurrentView('loading');
+      } else {
+        // Follow-up in an existing chat — keep the thread visible, append inline.
+        setCurrentView('answer');
+      }
+      startStream(q, activeChatId);
     },
-    [isStreaming, resetStream, startStream, loadHistory]
+    [isStreaming, resetStream, startStream, activeChatId, messages.length]
   );
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -791,33 +815,63 @@ export default function DashboardPage() {
 
   const handleSuggestionClick = (text: string) => submitQuery(text);
 
-  const handleHistoryClick = useCallback(
-    async (historyId: string) => {
-      if (isStreaming) return;
-      setActiveHistoryId(historyId);
+  const handleChatClick = useCallback(
+    async (chatId: string) => {
+      if (isStreaming || chatId === activeChatId) return;
+      setLoadingChatId(chatId);
       try {
-        const res = await api.get(`/query/history/${historyId}`);
-        const item = res.data as HistoryItem;
-        setHistoryAnswer(item);
-        setSubmittedQuery(item.query_text);
+        const res = await chatApi.messages(chatId);
+        setMessages(res.data.messages ?? []);
+        setActiveChatId(chatId);
+        setSubmittedQuery('');
         resetStream();
-        setCurrentView('answer');
+        setCurrentView((res.data.messages ?? []).length > 0 ? 'answer' : 'empty');
       } catch {
         // silent
       } finally {
-        setActiveHistoryId(null);
+        setLoadingChatId(null);
       }
     },
-    [isStreaming, resetStream]
+    [isStreaming, activeChatId, resetStream]
   );
 
-  const handleNewQuery = () => {
+  const handleNewChat = () => {
     resetStream();
-    setHistoryAnswer(null);
+    setActiveChatId(null);
+    setMessages([]);
     setSubmittedQuery('');
     setCurrentView('empty');
     setAnimationComplete(false);
     setInputValue('');
+  };
+
+  const handleRenameStart = (chat: ChatSummary) => {
+    setEditingChatId(chat.id);
+    setEditingTitle(chat.title);
+  };
+
+  const handleRenameSubmit = async (chatId: string) => {
+    const title = editingTitle.trim();
+    setEditingChatId(null);
+    if (!title) return;
+    try {
+      await chatApi.rename(chatId, title);
+      setChats(prev => prev.map(c => (c.id === chatId ? { ...c, title } : c)));
+    } catch {
+      // silent
+    }
+  };
+
+  const handleDeleteChat = async (chatId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm('Delete this chat? This cannot be undone.')) return;
+    try {
+      await chatApi.remove(chatId);
+      setChats(prev => prev.filter(c => c.id !== chatId));
+      if (activeChatId === chatId) handleNewChat();
+    } catch {
+      // silent
+    }
   };
 
   const handleLogout = async () => {
@@ -849,9 +903,6 @@ export default function DashboardPage() {
     );
   }
 
-  const displayAnswer = historyAnswer ? historyAnswer.answer : tokens;
-  const displayWarnings = historyAnswer ? [] : warnings;
-
   return (
     <div
       className="flex h-screen overflow-hidden"
@@ -876,7 +927,7 @@ export default function DashboardPage() {
             Niyam<span style={{ color: '#008560' }}>AI</span>
           </h1>
           <button
-            onClick={handleNewQuery}
+            onClick={handleNewChat}
             className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl active:scale-95 transition-all"
             style={{
               backgroundColor: '#008560',
@@ -887,11 +938,11 @@ export default function DashboardPage() {
             }}
           >
             <span className="material-symbols-outlined">add</span>
-            New Query
+            New Chat
           </button>
         </div>
 
-        {/* ── Scrollable history ── */}
+        {/* ── Scrollable chat list ── */}
         <div className="flex flex-col flex-1 min-h-0 px-4 overflow-y-auto custom-scrollbar">
           <span
             className="text-[10px] uppercase tracking-wider px-1 pb-1 pt-2 flex-shrink-0 sticky top-0"
@@ -901,26 +952,26 @@ export default function DashboardPage() {
               backgroundColor: '#e6fff5',
             }}
           >
-            Recent Queries
+            Chats
           </span>
 
-          {queryHistory.length === 0 && (
+          {chats.length === 0 && (
             <div
               className="px-3 py-2 text-[10px]"
               style={{ fontFamily: 'var(--font-dm-mono)', color: '#6d7a73' }}
             >
-              No history yet
+              No chats yet
             </div>
           )}
 
-          {queryHistory.map(item => {
-            const isActive =
-              currentView === 'answer' && submittedQuery === item.query_text;
+          {chats.map(chat => {
+            const isActive = activeChatId === chat.id;
+            const isEditing = editingChatId === chat.id;
             return (
               <div
-                key={item.id}
-                onClick={() => handleHistoryClick(item.id)}
-                className="flex flex-col gap-1 p-3 cursor-pointer transition-colors flex-shrink-0"
+                key={chat.id}
+                onClick={() => !isEditing && handleChatClick(chat.id)}
+                className="group flex flex-col gap-1 p-3 cursor-pointer transition-colors flex-shrink-0"
                 style={{
                   backgroundColor: isActive ? '#E1F5EE' : 'transparent',
                   borderRight: isActive ? '2px solid #008560' : '2px solid transparent',
@@ -943,15 +994,49 @@ export default function DashboardPage() {
                     className="text-[10px]"
                     style={{ fontFamily: 'var(--font-dm-mono)', color: '#6d7a73' }}
                   >
-                    {formatRelativeTime(item.created_at)}
+                    {formatRelativeTime(chat.updated_at)}
                   </span>
-                  {activeHistoryId === item.id && (
+                  {loadingChatId === chat.id && (
                     <span style={{ color: '#6d7a73', fontFamily: 'var(--font-dm-mono)', fontSize: '9px' }}>…</span>
                   )}
+                  <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={e => { e.stopPropagation(); handleRenameStart(chat); }}
+                      className="p-0.5 rounded"
+                      title="Rename"
+                      style={{ color: '#6d7a73' }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>edit</span>
+                    </button>
+                    <button
+                      onClick={e => handleDeleteChat(chat.id, e)}
+                      className="p-0.5 rounded"
+                      title="Delete"
+                      style={{ color: '#6d7a73' }}
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>delete</span>
+                    </button>
+                  </div>
                 </div>
-                <p className="text-xs font-medium line-clamp-2 leading-tight" style={{ color: '#002019' }}>
-                  {item.query_text}
-                </p>
+                {isEditing ? (
+                  <input
+                    autoFocus
+                    value={editingTitle}
+                    onChange={e => setEditingTitle(e.target.value)}
+                    onClick={e => e.stopPropagation()}
+                    onBlur={() => handleRenameSubmit(chat.id)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') handleRenameSubmit(chat.id);
+                      if (e.key === 'Escape') setEditingChatId(null);
+                    }}
+                    className="text-xs font-medium rounded px-1 -mx-1 outline-none border"
+                    style={{ color: '#002019', borderColor: '#008560' }}
+                  />
+                ) : (
+                  <p className="text-xs font-medium line-clamp-2 leading-tight" style={{ color: '#002019' }}>
+                    {chat.title}
+                  </p>
+                )}
               </div>
             );
           })}
@@ -1151,9 +1236,31 @@ export default function DashboardPage() {
           className={`flex-1 overflow-y-auto custom-scrollbar ${currentView === 'answer' ? 'block' : 'hidden'}`}
           style={{ paddingBottom: '160px' }}
         >
-          {currentView === 'answer' && (displayAnswer || error) && (
+          {currentView === 'answer' && (
             <>
-              {error ? (
+              {messages.map(turn => (
+                <AnswerSectionsView
+                  key={turn.id}
+                  answer={turn.answer}
+                  query={turn.query_text}
+                  warnings={[]}
+                />
+              ))}
+
+              {isStreaming && (
+                tokens ? (
+                  <AnswerSectionsView answer={tokens} query={submittedQuery} warnings={warnings} />
+                ) : (
+                  <div className="px-12 pt-6 pb-2 flex items-center gap-3">
+                    <div className="w-4 h-4 border-2 rounded-full animate-spin" style={{ borderColor: '#bccac1', borderTopColor: '#008560' }} />
+                    <span className="text-sm" style={{ fontFamily: 'var(--font-dm-mono)', color: '#6d7a73' }}>
+                      Thinking…
+                    </span>
+                  </div>
+                )
+              )}
+
+              {error && (
                 <div className="px-12 pt-6">
                   <div
                     className="p-4 rounded-xl border text-sm"
@@ -1167,13 +1274,6 @@ export default function DashboardPage() {
                     <p>{error}</p>
                   </div>
                 </div>
-              ) : (
-                <AnswerSectionsView
-                  answer={displayAnswer!}
-                  query={submittedQuery}
-                  warnings={displayWarnings}
-                  onNewQuery={handleNewQuery}
-                />
               )}
             </>
           )}
