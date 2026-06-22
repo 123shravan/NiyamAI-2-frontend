@@ -129,8 +129,24 @@ export function useSSEStream() {
       const decoder = new TextDecoder();
       let buffer = '';
 
+      // Stall watchdog — defense against a frozen UI. If the worker is killed or
+      // the connection silently dies, reader.read() can hang indefinitely with no
+      // bytes ever arriving, leaving the user staring at "Structuring answer"
+      // forever. We bound each read: if NO data arrives within the window, we abort
+      // and surface a retryable error instead of spinning. The window resets every
+      // time data flows, so a healthy long answer (tokens streaming continuously)
+      // never trips it — only a genuine stall does.
+      const STALL_TIMEOUT_MS = 75_000;
+      const readWithTimeout = () =>
+        Promise.race([
+          reader.read(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('STREAM_STALLED')), STALL_TIMEOUT_MS),
+          ),
+        ]) as ReturnType<typeof reader.read>;
+
       while (true) {
-        const { done, value } = await reader.read();
+        const { done, value } = await readWithTimeout();
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
@@ -157,6 +173,21 @@ export function useSSEStream() {
       setState(prev => ({ ...prev, isStreaming: false }));
     } catch (error: any) {
       if (error.name === 'AbortError') return;
+
+      // Stall watchdog tripped — tear down the dead connection so it can't linger,
+      // and tell the user it's retryable rather than a hard failure.
+      if (error.message === 'STREAM_STALLED') {
+        abortController.abort();
+        setState(prev => ({
+          ...prev,
+          isStreaming: false,
+          error: prev.tokens
+            ? null  // partial answer already shown; keep it rather than masking with an error
+            : 'The server took too long to respond. Please try your question again.',
+        }));
+        return;
+      }
+
       setState(prev => ({
         ...prev,
         isStreaming: false,
