@@ -75,6 +75,16 @@ export interface ChatTurn {
   answer: string;
   cited_node_ids: string[];
   created_at: string;
+  // Present only for a turn just answered in this session (carried over from the
+  // live SSE stream). DB-loaded turns omit it — their `answer` already contains
+  // the rendered citation blocks, so the UI parses citations from the text.
+  citations?: {
+    id: string;
+    display_id?: string;
+    text: string;
+    breadcrumb?: string[];
+    effective_from?: string;
+  }[];
 }
 
 export const chatApi = {

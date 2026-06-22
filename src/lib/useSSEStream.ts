@@ -13,6 +13,7 @@ export interface Citation {
   display_id: string;
   text: string;
   breadcrumb: string[];
+  effective_from?: string;
 }
 
 export interface StreamState {

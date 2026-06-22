@@ -381,16 +381,37 @@ function AnswerSectionsView({
   answer,
   query,
   warnings,
+  citations,
   onNewQuery,
 }: {
   answer: string;
   query: string;
   warnings: string[];
+  citations?: {
+    id: string;
+    display_id?: string;
+    text: string;
+    breadcrumb?: string[];
+    effective_from?: string;
+  }[];
   onNewQuery?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const parsed = parseAnswer(answer);
-  const citationBlocks = parseCitationBlocks(parsed.citationsText);
+  // Citations can arrive two ways:
+  //  1. Embedded in the answer text (DB-loaded turns store the rendered
+  //     blocks) → parse them out of the text.
+  //  2. As structured data from the live SSE stream — the model now emits only
+  //     [CITE:ID] markers, so the FULL CITATIONS text has no quotes to parse.
+  // Prefer parsed blocks; fall back to the structured citations payload.
+  const parsedBlocks = parseCitationBlocks(parsed.citationsText);
+  const citationBlocks: CitationBlock[] = parsedBlocks.length > 0
+    ? parsedBlocks
+    : (citations ?? []).map(c => ({
+        title: c.display_id || formatCiteId(c.id),
+        quote: c.text,
+        effectiveDate: c.effective_from || '',
+      }));
   const tags = extractTags(query);
 
   return (
@@ -432,12 +453,12 @@ function AnswerSectionsView({
                 </span>
               ))}
             </div>
-            {parsed.citationCount > 0 && (
+            {citationBlocks.length > 0 && (
               <div
                 className="text-[10px]"
                 style={{ fontFamily: 'var(--font-dm-mono)', color: '#6d7a73' }}
               >
-                {parsed.citationCount} citation{parsed.citationCount !== 1 ? 's' : ''}
+                {citationBlocks.length} citation{citationBlocks.length !== 1 ? 's' : ''}
               </div>
             )}
           </div>
@@ -518,7 +539,7 @@ function AnswerSectionsView({
               className="font-bold text-lg"
               style={{ fontFamily: 'var(--font-syne)', color: '#002019' }}
             >
-              Full Citations ({parsed.citationCount})
+              Full Citations ({citationBlocks.length})
             </h3>
           </div>
           <div className="flex flex-col gap-4">
@@ -756,6 +777,9 @@ export default function DashboardPage() {
         query_text: submittedQuery,
         answer: tokens,
         cited_node_ids: citations.map(c => c.id),
+        // Carry the structured citations so they keep rendering after the SSE
+        // state resets — the live answer text only has [CITE:ID] markers now.
+        citations,
         created_at: new Date().toISOString(),
       }]);
       resetStream();
@@ -1244,12 +1268,13 @@ export default function DashboardPage() {
                   answer={turn.answer}
                   query={turn.query_text}
                   warnings={[]}
+                  citations={turn.citations}
                 />
               ))}
 
               {isStreaming && (
                 tokens ? (
-                  <AnswerSectionsView answer={tokens} query={submittedQuery} warnings={warnings} />
+                  <AnswerSectionsView answer={tokens} query={submittedQuery} warnings={warnings} citations={citations} />
                 ) : (
                   <div className="px-12 pt-6 pb-2 flex items-center gap-3">
                     <div className="w-4 h-4 border-2 rounded-full animate-spin" style={{ borderColor: '#bccac1', borderTopColor: '#008560' }} />
