@@ -180,38 +180,133 @@ function renderInline(text: string): React.ReactNode[] {
   });
 }
 
+// Detect a "table-type" bullet, i.e. a label→value pair such as
+//   **2024-25:** 50%   |   **Category IV**: compostable   |   Producer: registers
+// Returns [label, value] when the bullet is one of these, else null. Used to turn
+// a run of such bullets into a real table instead of a bullet list.
+function parseKeyValue(content: string): [string, string] | null {
+  const c = content.trim();
+  // **Label:** value  (colon inside the bold)
+  let m = c.match(/^\*\*\s*(.+?)\s*:\s*\*\*\s*(.+)$/);
+  if (m) return [m[1].trim(), m[2].trim()];
+  // **Label**: value  (colon just after the bold)
+  m = c.match(/^\*\*\s*(.+?)\s*\*\*\s*[:—-]\s*(.+)$/);
+  if (m) return [m[1].trim(), m[2].trim()];
+  // Label: value  (plain, short label, no markdown in the label)
+  m = c.match(/^([^:*\n]{1,60}?)\s*:\s*(.+)$/);
+  if (m) return [m[1].trim(), m[2].trim()];
+  return null;
+}
+
+function KeyValueTable({ rows, tkey }: { rows: [string, string][]; tkey: number }) {
+  return (
+    <div key={tkey} className="mb-3 overflow-x-auto">
+      <table className="w-full border-collapse text-sm" style={{ color: '#002019' }}>
+        <tbody>
+          {rows.map(([label, value], i) => (
+            <tr key={i} style={{ borderTop: i === 0 ? 'none' : '1px solid #d7e5e0' }}>
+              <td className="py-2 pr-4 align-top font-semibold whitespace-nowrap">
+                {renderInline(label)}
+              </td>
+              <td className="py-2 align-top leading-snug">{renderInline(value)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Render a GitHub-flavoured markdown table ( | a | b | with a |---|---| divider ).
+function MarkdownTable({ block, tkey }: { block: string[]; tkey: number }) {
+  const toCells = (row: string) =>
+    row.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map((s) => s.trim());
+  const header = toCells(block[0]);
+  const bodyRows = block.slice(2).map(toCells);
+  return (
+    <div key={tkey} className="mb-3 overflow-x-auto">
+      <table className="w-full border-collapse text-sm" style={{ color: '#002019' }}>
+        <thead>
+          <tr style={{ borderBottom: '2px solid #b7d3cb' }}>
+            {header.map((h, i) => (
+              <th key={i} className="py-2 pr-4 text-left font-semibold align-bottom">
+                {renderInline(h)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {bodyRows.map((cells, r) => (
+            <tr key={r} style={{ borderTop: '1px solid #d7e5e0' }}>
+              {cells.map((cell, c) => (
+                <td key={c} className="py-2 pr-4 align-top leading-snug">
+                  {renderInline(cell)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+const isTableRow = (l: string) => /^\s*\|.*\|\s*$/.test(l);
+const isTableDivider = (l: string) => /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/.test(l) && l.includes('-');
+
 function SimpleMarkdown({ text }: { text: string }) {
   if (!text) return null;
   const lines = text.split('\n');
   const elements: React.ReactElement[] = [];
-  let inList = false;
-  let listItems: React.ReactElement[] = [];
+  let bulletBuffer: string[] = []; // raw bullet content, flushed as list OR table
   let key = 0;
 
-  const flushList = () => {
-    if (inList && listItems.length > 0) {
+  // A run of bullets becomes a table only when EVERY bullet is a label→value pair;
+  // otherwise it stays a normal bullet list (so prose bullets are never mangled).
+  const flushBullets = () => {
+    if (bulletBuffer.length === 0) return;
+    const pairs = bulletBuffer.map(parseKeyValue);
+    const allKeyValue = bulletBuffer.length >= 2 && pairs.every((p) => p !== null);
+    if (allKeyValue) {
+      elements.push(<KeyValueTable key={key} tkey={key} rows={pairs as [string, string][]} />);
+      key++;
+    } else {
       elements.push(
         <ul key={key++} className="list-disc pl-5 mb-3 space-y-1">
-          {listItems}
+          {bulletBuffer.map((content, i) => (
+            <li key={i} className="text-sm leading-snug" style={{ color: '#002019' }}>
+              {renderInline(content)}
+            </li>
+          ))}
         </ul>
       );
-      listItems = [];
-      inList = false;
     }
+    bulletBuffer = [];
   };
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // GitHub-flavoured markdown table: header row + |---| divider + body rows
+    if (isTableRow(line) && i + 1 < lines.length && isTableDivider(lines[i + 1])) {
+      flushBullets();
+      const block: string[] = [line, lines[i + 1]];
+      let j = i + 2;
+      while (j < lines.length && isTableRow(lines[j])) {
+        block.push(lines[j]);
+        j++;
+      }
+      elements.push(<MarkdownTable key={key} tkey={key} block={block} />);
+      key++;
+      i = j - 1;
+      continue;
+    }
+
     const isBullet = /^\s*[\*\-]\s+/.test(line);
     if (isBullet) {
-      inList = true;
-      const content = line.replace(/^\s*[\*\-]\s+/, '');
-      listItems.push(
-        <li key={key++} className="text-sm leading-snug" style={{ color: '#002019' }}>
-          {renderInline(content)}
-        </li>
-      );
+      bulletBuffer.push(line.replace(/^\s*[\*\-]\s+/, ''));
     } else {
-      flushList();
+      flushBullets();
       if (line.trim()) {
         elements.push(
           <p key={key++} className="mb-3 text-sm leading-relaxed" style={{ color: '#002019' }}>
@@ -221,7 +316,7 @@ function SimpleMarkdown({ text }: { text: string }) {
       }
     }
   }
-  flushList();
+  flushBullets();
 
   return <div>{elements}</div>;
 }
